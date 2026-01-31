@@ -1,0 +1,12 @@
+.git
+.github
+.vscode
+Dockerfile
+*.log
+server.log
+/docs
+/tests
+/target
+
+**/*.rs.bk
+**/.DS_Store
