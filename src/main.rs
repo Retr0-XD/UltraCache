@@ -224,21 +224,35 @@ async fn handle_command(
                 .await
         }
         "HSET" => {
-            if cmd.len() != 4 {
+            if cmd.len() < 4 || (cmd.len() - 2) % 2 != 0 {
                 return RespValue::Error("ERR wrong number of arguments for HSET".to_string());
             }
-            runtime
-                .execute(
-                    tenant_id.clone(),
-                    *tenant_limit_bytes,
-                    *tenant_cpu_quota_micros,
-                    Command::Hset {
-                        key: cmd[1].clone(),
-                        field: cmd[2].clone(),
-                        value: cmd[3].as_bytes().to_vec(),
-                    },
-                )
-                .await
+            let key = cmd[1].clone();
+            let mut added: i64 = 0;
+            let mut idx = 2;
+            while idx < cmd.len() {
+                let field = cmd[idx].clone();
+                let value = cmd[idx + 1].as_bytes().to_vec();
+                let resp = runtime
+                    .execute(
+                        tenant_id.clone(),
+                        *tenant_limit_bytes,
+                        *tenant_cpu_quota_micros,
+                        Command::Hset {
+                            key: key.clone(),
+                            field,
+                            value,
+                        },
+                    )
+                    .await;
+                match resp {
+                    RespValue::Integer(n) => added += n,
+                    RespValue::Error(_) => return resp,
+                    _ => return RespValue::Error("ERR invalid response".to_string()),
+                }
+                idx += 2;
+            }
+            RespValue::Integer(added)
         }
         "HDEL" => {
             if cmd.len() != 3 {
@@ -257,36 +271,56 @@ async fn handle_command(
                 .await
         }
         "SADD" => {
-            if cmd.len() != 3 {
+            if cmd.len() < 3 {
                 return RespValue::Error("ERR wrong number of arguments for SADD".to_string());
             }
-            runtime
-                .execute(
-                    tenant_id.clone(),
-                    *tenant_limit_bytes,
-                    *tenant_cpu_quota_micros,
-                    Command::Sadd {
-                        key: cmd[1].clone(),
-                        member: cmd[2].clone(),
-                    },
-                )
-                .await
+            let key = cmd[1].clone();
+            let mut added: i64 = 0;
+            for member in cmd[2..].iter() {
+                let resp = runtime
+                    .execute(
+                        tenant_id.clone(),
+                        *tenant_limit_bytes,
+                        *tenant_cpu_quota_micros,
+                        Command::Sadd {
+                            key: key.clone(),
+                            member: member.clone(),
+                        },
+                    )
+                    .await;
+                match resp {
+                    RespValue::Integer(n) => added += n,
+                    RespValue::Error(_) => return resp,
+                    _ => return RespValue::Error("ERR invalid response".to_string()),
+                }
+            }
+            RespValue::Integer(added)
         }
         "SREM" => {
-            if cmd.len() != 3 {
+            if cmd.len() < 3 {
                 return RespValue::Error("ERR wrong number of arguments for SREM".to_string());
             }
-            runtime
-                .execute(
-                    tenant_id.clone(),
-                    *tenant_limit_bytes,
-                    *tenant_cpu_quota_micros,
-                    Command::Srem {
-                        key: cmd[1].clone(),
-                        member: cmd[2].clone(),
-                    },
-                )
-                .await
+            let key = cmd[1].clone();
+            let mut removed: i64 = 0;
+            for member in cmd[2..].iter() {
+                let resp = runtime
+                    .execute(
+                        tenant_id.clone(),
+                        *tenant_limit_bytes,
+                        *tenant_cpu_quota_micros,
+                        Command::Srem {
+                            key: key.clone(),
+                            member: member.clone(),
+                        },
+                    )
+                    .await;
+                match resp {
+                    RespValue::Integer(n) => removed += n,
+                    RespValue::Error(_) => return resp,
+                    _ => return RespValue::Error("ERR invalid response".to_string()),
+                }
+            }
+            RespValue::Integer(removed)
         }
         "SMEMBERS" => {
             if cmd.len() != 2 {
@@ -304,40 +338,64 @@ async fn handle_command(
                 .await
         }
         "ZADD" => {
-            if cmd.len() != 4 {
+            if cmd.len() < 4 || (cmd.len() - 2) % 2 != 0 {
                 return RespValue::Error("ERR wrong number of arguments for ZADD".to_string());
             }
-            match cmd[2].parse::<f64>() {
-                Ok(score) => runtime
+            let key = cmd[1].clone();
+            let mut added: i64 = 0;
+            let mut idx = 2;
+            while idx < cmd.len() {
+                let score = match cmd[idx].parse::<f64>() {
+                    Ok(score) => score,
+                    Err(_) => return RespValue::Error("ERR value is not a valid float".to_string()),
+                };
+                let member = cmd[idx + 1].clone();
+                let resp = runtime
                     .execute(
                         tenant_id.clone(),
                         *tenant_limit_bytes,
                         *tenant_cpu_quota_micros,
                         Command::Zadd {
-                            key: cmd[1].clone(),
+                            key: key.clone(),
                             score,
-                            member: cmd[3].clone(),
+                            member,
                         },
                     )
-                    .await,
-                Err(_) => RespValue::Error("ERR value is not a valid float".to_string()),
+                    .await;
+                match resp {
+                    RespValue::Integer(n) => added += n,
+                    RespValue::Error(_) => return resp,
+                    _ => return RespValue::Error("ERR invalid response".to_string()),
+                }
+                idx += 2;
             }
+            RespValue::Integer(added)
         }
         "ZREM" => {
-            if cmd.len() != 3 {
+            if cmd.len() < 3 {
                 return RespValue::Error("ERR wrong number of arguments for ZREM".to_string());
             }
-            runtime
-                .execute(
-                    tenant_id.clone(),
-                    *tenant_limit_bytes,
-                    *tenant_cpu_quota_micros,
-                    Command::Zrem {
-                        key: cmd[1].clone(),
-                        member: cmd[2].clone(),
-                    },
-                )
-                .await
+            let key = cmd[1].clone();
+            let mut removed: i64 = 0;
+            for member in cmd[2..].iter() {
+                let resp = runtime
+                    .execute(
+                        tenant_id.clone(),
+                        *tenant_limit_bytes,
+                        *tenant_cpu_quota_micros,
+                        Command::Zrem {
+                            key: key.clone(),
+                            member: member.clone(),
+                        },
+                    )
+                    .await;
+                match resp {
+                    RespValue::Integer(n) => removed += n,
+                    RespValue::Error(_) => return resp,
+                    _ => return RespValue::Error("ERR invalid response".to_string()),
+                }
+            }
+            RespValue::Integer(removed)
         }
         "ZRANGE" => {
             if cmd.len() != 4 {
