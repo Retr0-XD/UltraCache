@@ -6,6 +6,7 @@ pub enum RespValue {
     Error(String),
     Integer(i64),
     BulkString(Option<Vec<u8>>),
+    Array(Vec<RespValue>),
 }
 
 impl RespValue {
@@ -34,6 +35,13 @@ impl RespValue {
                 out
             }
             RespValue::BulkString(None) => b"$-1\r\n".to_vec(),
+            RespValue::Array(items) => {
+                let mut out = format!("*{}\r\n", items.len()).into_bytes();
+                for item in items {
+                    out.extend_from_slice(&item.encode());
+                }
+                out
+            }
         }
     }
 }

@@ -1,13 +1,13 @@
 # UltraCache Development Status
 
 **Last Updated:** 2026-01-31  
-**Current Phase:** Week 1 Complete ✅
+**Current Phase:** Data Types Complete ✅
 
 ## Completed Features
 
 ### Core Infrastructure ✅
 - **TCP Server**: Tokio-based async server on port 6379
-- **RESP Protocol**: Parser/serializer for Redis protocol subset
+- **RESP Protocol**: Parser/serializer for Redis protocol subset (including Arrays)
 - **Shard-per-Core Runtime**: Actor-based architecture with deterministic key routing
 - **Connection Management**: Multiple concurrent client support
 
@@ -19,11 +19,15 @@
 
 ### Data Operations ✅
 - **String Commands**: `PING`, `GET`, `SET`, `DEL`
+- **Hash Commands**: `HGET`, `HSET`, `HDEL` ✅
+- **Set Commands**: `SADD`, `SREM`, `SMEMBERS` ✅
+- **Sorted Set Commands**: `ZADD`, `ZREM`, `ZRANGE` ✅
 - **TTL Support**: `EXPIRE`, `TTL` with per-tenant expiration tracking
 - **Key Routing**: Hash-based routing to shards
+- **Type Safety**: WRONGTYPE errors for operations on wrong data types
 
 ### Resource Management ✅
-- **Memory Accounting**: Per-entry size tracking (key + value)
+- **Memory Accounting**: Per-entry size tracking for all data types (String/Hash/Set/ZSet)
 - **Memory Limits**: Hard caps enforced per tenant
 - **LRU Eviction**: Per-tenant LRU cache with automatic eviction
 - **CPU Tracking**: Per-command execution time recording
@@ -34,6 +38,8 @@
 - Tenant isolation verification
 - TTL functionality tests
 - CPU throttling tests
+- Data type tests: Hash, Set, ZSet
+- Comprehensive multi-type integration test
 - Week 1 milestone validation suite
 
 ## File Structure
@@ -58,7 +64,11 @@
     ├── test_ttl.py         # TTL functionality tests
     ├── test_cpu_simple.py  # CPU throttling tests
     ├── test_cpu_throttle.py # Alternative CPU tests
-    └── test_week1_complete.py # Week 1 validation suite
+    ├── test_week1_complete.py # Week 1 validation suite
+    ├── test_hash.py        # Hash command tests ✅
+    ├── test_set.py         # Set command tests ✅
+    ├── test_zset.py        # Sorted Set command tests ✅
+    └── test_data_types.py  # Comprehensive multi-type test ✅
 ```
 
 ## Build Status
@@ -86,21 +96,22 @@
 |---------|--------|--------------|
 | TCP + RESP | ✅ | Native client tests pass |
 | Multi-tenant isolation | ✅ | Cross-tenant key access blocked |
-| Memory accounting | ✅ | Per-tenant tracking active |
+| Memory accounting | ✅ | Per-tenant tracking for all types |
 | LRU eviction | ✅ | Evicts within tenant boundary |
 | TTL/Expiration | ✅ | Keys expire correctly |
 | CPU tracking | ✅ | Per-command time recorded |
 | CPU throttling | ✅ | Backpressure on quota breach |
 | Shard routing | ✅ | Keys distributed across cores |
+| String operations | ✅ | GET/SET/DEL working |
+| Hash operations | ✅ | HGET/HSET/HDEL working |
+| Set operations | ✅ | SADD/SREM/SMEMBERS working |
+| Sorted Set operations | ✅ | ZADD/ZREM/ZRANGE working |
+| Type safety | ✅ | WRONGTYPE errors enforced |
+| Multi-type coexistence | ✅ | Different types on different keys |
 
-## Next Steps (Week 2)
+## Next Steps (Week 2/3)
 
-### Data Types
-- [ ] Hash commands: `HGET`, `HSET`, `HDEL`
-- [ ] Set commands: `SADD`, `SREM`, `SMEMBERS`
-- [ ] Sorted Set commands: `ZADD`, `ZREM`, `ZRANGE`
-
-### Improvements
+### Observability
 - [ ] Latency p99 tracking (rolling window)
 - [ ] Admin stats endpoint
 - [ ] Per-tenant metrics exposure
@@ -110,9 +121,9 @@
 
 1. **CPU Quota Too Low**: Current 5ms/sec is for testing; production should use ~100ms/sec
 2. **No Persistence**: In-memory only (Week 3 feature)
-3. **Limited Data Types**: Strings only (Week 2 adds Hash/Set/ZSet)
-4. **No Cluster Mode**: Single-node only
-5. **Basic Error Handling**: Needs refinement for edge cases
+3. **No Cluster Mode**: Single-node only
+4. **Basic Error Handling**: Needs refinement for edge cases
+5. **Limited Command Set**: Core operations only (no HINCRBY, SINTER, ZUNIONSTORE, etc.)
 
 ## Performance Notes
 
@@ -132,7 +143,10 @@ cargo build --release
 
 # Run tests (separate terminal)
 python3 tests/test_week1_complete.py
-python3 tests/test_ttl.py
+python3 tests/test_hash.py
+python3 tests/test_set.py
+python3 tests/test_zset.py
+python3 tests/test_data_types.py
 ```
 
 ## Repository State

@@ -200,6 +200,158 @@ async fn handle_command(
                 )
                 .await
         }
+        "HGET" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for HGET".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Hget {
+                        key: cmd[1].clone(),
+                        field: cmd[2].clone(),
+                    },
+                )
+                .await
+        }
+        "HSET" => {
+            if cmd.len() != 4 {
+                return RespValue::Error("ERR wrong number of arguments for HSET".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Hset {
+                        key: cmd[1].clone(),
+                        field: cmd[2].clone(),
+                        value: cmd[3].as_bytes().to_vec(),
+                    },
+                )
+                .await
+        }
+        "HDEL" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for HDEL".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Hdel {
+                        key: cmd[1].clone(),
+                        field: cmd[2].clone(),
+                    },
+                )
+                .await
+        }
+        "SADD" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for SADD".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Sadd {
+                        key: cmd[1].clone(),
+                        member: cmd[2].clone(),
+                    },
+                )
+                .await
+        }
+        "SREM" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for SREM".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Srem {
+                        key: cmd[1].clone(),
+                        member: cmd[2].clone(),
+                    },
+                )
+                .await
+        }
+        "SMEMBERS" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for SMEMBERS".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Smembers {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "ZADD" => {
+            if cmd.len() != 4 {
+                return RespValue::Error("ERR wrong number of arguments for ZADD".to_string());
+            }
+            match cmd[2].parse::<f64>() {
+                Ok(score) => runtime
+                    .execute(
+                        tenant_id.clone(),
+                        *tenant_limit_bytes,
+                        *tenant_cpu_quota_micros,
+                        Command::Zadd {
+                            key: cmd[1].clone(),
+                            score,
+                            member: cmd[3].clone(),
+                        },
+                    )
+                    .await,
+                Err(_) => RespValue::Error("ERR value is not a valid float".to_string()),
+            }
+        }
+        "ZREM" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for ZREM".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Zrem {
+                        key: cmd[1].clone(),
+                        member: cmd[2].clone(),
+                    },
+                )
+                .await
+        }
+        "ZRANGE" => {
+            if cmd.len() != 4 {
+                return RespValue::Error("ERR wrong number of arguments for ZRANGE".to_string());
+            }
+            match (cmd[2].parse::<i64>(), cmd[3].parse::<i64>()) {
+                (Ok(start), Ok(stop)) => runtime
+                    .execute(
+                        tenant_id.clone(),
+                        *tenant_limit_bytes,
+                        *tenant_cpu_quota_micros,
+                        Command::Zrange {
+                            key: cmd[1].clone(),
+                            start,
+                            stop,
+                        },
+                    )
+                    .await,
+                _ => RespValue::Error("ERR value is not an integer or out of range".to_string()),
+            }
+        }
         _ => RespValue::Error("ERR unknown command".to_string()),
     }
 }
