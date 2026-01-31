@@ -11,6 +11,7 @@ use crate::resp::RespValue;
 #[derive(Debug, Clone)]
 pub enum Command {
     Ping,
+    Stats,  // Admin command for tenant stats
     Get { key: String },
     Set { key: String, value: Vec<u8> },
     Del { key: String },
@@ -68,6 +69,48 @@ impl ShardRuntime {
         Self { shards }
     }
 
+    pub async fn stats(
+        &self,
+        tenant_id: String,
+        tenant_limit_bytes: u64,
+        cpu_quota_micros: u64,
+    ) -> RespValue {
+        let mut receivers = Vec::with_capacity(self.shards.len());
+
+        for tx in &self.shards {
+            let (resp_tx, resp_rx) = oneshot::channel();
+            let req = ShardRequest {
+                tenant_id: tenant_id.clone(),
+                tenant_limit_bytes,
+                cpu_quota_micros,
+                command: Command::Stats,
+                respond_to: resp_tx,
+            };
+
+            if let Err(_) = tx.send(req).await {
+                return RespValue::Error("ERR shard unavailable".to_string());
+            }
+            receivers.push(resp_rx);
+        }
+
+        let mut agg = StatsAggregate::new(self.shards.len() as u64);
+
+        for rx in receivers {
+            match rx.await {
+                Ok(RespValue::BulkString(Some(bytes))) => {
+                    let stats_str = String::from_utf8_lossy(&bytes);
+                    let parsed = parse_stats_kv(&stats_str);
+                    agg.absorb(&parsed);
+                }
+                Ok(RespValue::Error(msg)) => return RespValue::Error(msg),
+                Ok(_) => return RespValue::Error("ERR invalid stats response".to_string()),
+                Err(_) => return RespValue::Error("ERR shard response failed".to_string()),
+            }
+        }
+
+        RespValue::BulkString(Some(agg.format(&tenant_id).into_bytes()))
+    }
+
     pub async fn execute(
         &self,
         tenant_id: String,
@@ -115,7 +158,7 @@ impl ShardRuntime {
             | Command::Zrange { key, .. } => {
                 key.hash(&mut hasher)
             }
-            Command::Ping => {}
+            Command::Ping | Command::Stats => {}
         }
         let hash = hasher.finish() as usize;
         hash % self.shards.len()
@@ -152,6 +195,38 @@ fn handle_command(
     
     let result = match command {
         Command::Ping => RespValue::SimpleString("PONG".to_string()),
+        Command::Stats => {
+            // Return tenant stats as a bulk string (formatted text)
+            let p99 = state.calculate_p99();
+            let key_count = state.cache.len();
+            let stats = format!(
+                "tenant_id: {}\n\
+                 memory_used_bytes: {}\n\
+                 memory_limit_bytes: {}\n\
+                 memory_usage_pct: {:.2}\n\
+                 cpu_used_micros: {}\n\
+                 cpu_quota_micros: {}\n\
+                 cpu_usage_pct: {:.2}\n\
+                 total_commands: {}\n\
+                 eviction_count: {}\n\
+                 key_count: {}\n\
+                 latency_p99_micros: {}\n\
+                 latency_p99_ms: {:.3}",
+                tenant_id,
+                state.used_bytes,
+                state.limit_bytes,
+                (state.used_bytes as f64 / state.limit_bytes as f64) * 100.0,
+                state.cpu_used_micros,
+                state.cpu_quota_micros,
+                (state.cpu_used_micros as f64 / state.cpu_quota_micros as f64) * 100.0,
+                state.total_commands,
+                state.eviction_count,
+                key_count,
+                p99,
+                p99 as f64 / 1000.0
+            );
+            RespValue::BulkString(Some(stats.into_bytes()))
+        }
         Command::Get { key } => {
             let k = tenant_key(&tenant_id, &key);
             match state.cache.get(&k) {
@@ -185,6 +260,7 @@ fn handle_command(
                 if let Some((ek, ev)) = state.cache.pop_lru() {
                     state.used_bytes =
                         state.used_bytes.saturating_sub(calculate_entry_size(&ek, &ev.data));
+                    state.record_eviction();
                     projected = state.used_bytes + entry_size;
                 } else {
                     return RespValue::Error("ERR tenant memory limit exceeded".to_string());
@@ -456,9 +532,10 @@ fn handle_command(
         }
     };
     
-    // Record CPU time used
+    // Record CPU time and latency
     let elapsed_micros = start.elapsed().as_micros() as u64;
     state.record_cpu_time(elapsed_micros);
+    state.record_latency(elapsed_micros);
     
     result
 }
@@ -483,6 +560,104 @@ impl RuntimeHandle {
     }
 }
 
+struct StatsAggregate {
+    shards: u64,
+    memory_used_bytes: u64,
+    memory_limit_bytes: u64,
+    cpu_used_micros: u64,
+    cpu_quota_micros: u64,
+    total_commands: u64,
+    eviction_count: u64,
+    key_count: u64,
+    latency_p99_micros: u64,
+}
+
+impl StatsAggregate {
+    fn new(shards: u64) -> Self {
+        Self {
+            shards,
+            memory_used_bytes: 0,
+            memory_limit_bytes: 0,
+            cpu_used_micros: 0,
+            cpu_quota_micros: 0,
+            total_commands: 0,
+            eviction_count: 0,
+            key_count: 0,
+            latency_p99_micros: 0,
+        }
+    }
+
+    fn absorb(&mut self, parsed: &HashMap<String, String>) {
+        self.memory_used_bytes += parse_u64(parsed.get("memory_used_bytes"));
+        self.memory_limit_bytes += parse_u64(parsed.get("memory_limit_bytes"));
+        self.cpu_used_micros += parse_u64(parsed.get("cpu_used_micros"));
+        self.cpu_quota_micros += parse_u64(parsed.get("cpu_quota_micros"));
+        self.total_commands += parse_u64(parsed.get("total_commands"));
+        self.eviction_count += parse_u64(parsed.get("eviction_count"));
+        self.key_count += parse_u64(parsed.get("key_count"));
+        let p99 = parse_u64(parsed.get("latency_p99_micros"));
+        if p99 > self.latency_p99_micros {
+            self.latency_p99_micros = p99;
+        }
+    }
+
+    fn format(&self, tenant_id: &str) -> String {
+        let memory_usage_pct = if self.memory_limit_bytes > 0 {
+            (self.memory_used_bytes as f64 / self.memory_limit_bytes as f64) * 100.0
+        } else {
+            0.0
+        };
+        let cpu_usage_pct = if self.cpu_quota_micros > 0 {
+            (self.cpu_used_micros as f64 / self.cpu_quota_micros as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        format!(
+            "tenant_id: {}\n\
+             shards: {}\n\
+             memory_used_bytes: {}\n\
+             memory_limit_bytes: {}\n\
+             memory_usage_pct: {:.2}\n\
+             cpu_used_micros: {}\n\
+             cpu_quota_micros: {}\n\
+             cpu_usage_pct: {:.2}\n\
+             total_commands: {}\n\
+             eviction_count: {}\n\
+             key_count: {}\n\
+             latency_p99_micros: {}\n\
+             latency_p99_ms: {:.3}",
+            tenant_id,
+            self.shards,
+            self.memory_used_bytes,
+            self.memory_limit_bytes,
+            memory_usage_pct,
+            self.cpu_used_micros,
+            self.cpu_quota_micros,
+            cpu_usage_pct,
+            self.total_commands,
+            self.eviction_count,
+            self.key_count,
+            self.latency_p99_micros,
+            self.latency_p99_micros as f64 / 1000.0
+        )
+    }
+}
+
+fn parse_stats_kv(stats: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for line in stats.lines() {
+        if let Some((key, value)) = line.split_once(':') {
+            map.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+    map
+}
+
+fn parse_u64(value: Option<&String>) -> u64 {
+    value.and_then(|v| v.parse::<u64>().ok()).unwrap_or(0)
+}
+
 struct Entry {
     data: EntryData,
     expires_at: Option<u64>,
@@ -503,6 +678,10 @@ struct TenantState {
     cpu_used_micros: u64,
     cpu_quota_micros: u64,
     last_reset: std::time::Instant,
+    // Latency tracking (simple histogram)
+    latency_samples: Vec<u64>,  // Store last N latencies in microseconds
+    total_commands: u64,
+    eviction_count: u64,
 }
 
 impl TenantState {
@@ -515,6 +694,9 @@ impl TenantState {
             cpu_used_micros: 0,
             cpu_quota_micros,
             last_reset: std::time::Instant::now(),
+            latency_samples: Vec::with_capacity(1000),
+            total_commands: 0,
+            eviction_count: 0,
         }
     }
     
@@ -532,6 +714,29 @@ impl TenantState {
     
     fn record_cpu_time(&mut self, micros: u64) {
         self.cpu_used_micros = self.cpu_used_micros.saturating_add(micros);
+    }
+    
+    fn record_latency(&mut self, micros: u64) {
+        self.total_commands += 1;
+        // Keep last 1000 samples for p99 calculation
+        if self.latency_samples.len() >= 1000 {
+            self.latency_samples.remove(0);
+        }
+        self.latency_samples.push(micros);
+    }
+    
+    fn calculate_p99(&self) -> u64 {
+        if self.latency_samples.is_empty() {
+            return 0;
+        }
+        let mut sorted = self.latency_samples.clone();
+        sorted.sort_unstable();
+        let idx = (sorted.len() as f64 * 0.99).ceil() as usize - 1;
+        sorted[idx.min(sorted.len() - 1)]
+    }
+    
+    fn record_eviction(&mut self) {
+        self.eviction_count += 1;
     }
 
     fn is_expired(entry: &Entry) -> bool {

@@ -106,6 +106,13 @@ async fn handle_command(
                 Command::Ping,
             )
             .await,
+        "STATS" => runtime
+            .stats(
+                tenant_id.clone(),
+                *tenant_limit_bytes,
+                *tenant_cpu_quota_micros,
+            )
+            .await,
         "AUTH" => {
             if cmd.len() < 2 {
                 return RespValue::Error("ERR wrong number of arguments for AUTH".to_string());

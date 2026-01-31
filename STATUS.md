@@ -1,7 +1,7 @@
 # UltraCache Development Status
 
 **Last Updated:** 2026-01-31  
-**Current Phase:** Data Types Complete ✅
+**Current Phase:** Base Complete ✅
 
 ## Completed Features
 
@@ -33,6 +33,11 @@
 - **CPU Tracking**: Per-command execution time recording
 - **CPU Throttling**: Token-bucket rate limiting per tenant
 
+### Observability ✅
+- **Latency Tracking**: Rolling p99 latency per tenant (microseconds)
+- **Admin Stats Command**: `STATS` aggregates per-tenant metrics across shards
+- **Eviction Metrics**: Per-tenant eviction counter
+
 ### Testing ✅
 - Native Python test clients (no Redis dependency)
 - Tenant isolation verification
@@ -40,6 +45,8 @@
 - CPU throttling tests
 - Data type tests: Hash, Set, ZSet
 - Comprehensive multi-type integration test
+- Admin stats test suite
+- Noisy-neighbor load isolation test
 - Week 1 milestone validation suite
 
 ## File Structure
@@ -68,7 +75,9 @@
     ├── test_hash.py        # Hash command tests ✅
     ├── test_set.py         # Set command tests ✅
     ├── test_zset.py        # Sorted Set command tests ✅
-    └── test_data_types.py  # Comprehensive multi-type test ✅
+    ├── test_data_types.py  # Comprehensive multi-type test ✅
+    ├── test_stats.py       # Admin STATS command test ✅
+    └── test_load_isolation.py # Noisy-neighbor load test ✅
 ```
 
 ## Build Status
@@ -108,16 +117,27 @@
 | Sorted Set operations | ✅ | ZADD/ZREM/ZRANGE working |
 | Type safety | ✅ | WRONGTYPE errors enforced |
 | Multi-type coexistence | ✅ | Different types on different keys |
+| Latency p99 tracking | ✅ | Rolling histogram per tenant |
+| Admin STATS command | ✅ | Aggregates metrics across shards |
+| Noisy-neighbor isolation | ✅ | Load test demonstrates isolation |
 
-## Next Steps (Week 2/3)
+## Next Steps (Post-MVP)
 
-### Observability
-- [ ] Latency p99 tracking (rolling window)
-- [ ] Admin stats endpoint
-- [ ] Per-tenant metrics exposure
-- [ ] Noisy-neighbor benchmark harness
+### Optional Enhancements
+- [ ] Persistence (append-only log)
+- [ ] Multi-argument commands (SADD key m1 m2 m3)
+- [ ] Advanced operations (HINCRBY, SINTER, ZUNIONSTORE, etc.)
+- [ ] Cluster mode (multi-node replication)
+- [ ] Pub/Sub (limited set operations)
 
-## Known Limitations
+## MVP Completion Checklist
+
+✅ **Week 1 Complete**: Core skeleton, RESP, sharding, basic commands  
+✅ **Week 2 Complete**: Tenant isolation, memory limits, CPU throttling  
+✅ **Week 3 Complete**: All data types (String/Hash/Set/ZSet)  
+✅ **Week 4 Complete**: Observability (stats), load testing, validation  
+
+
 
 1. **CPU Quota Too Low**: Current 5ms/sec is for testing; production should use ~100ms/sec
 2. **No Persistence**: In-memory only (Week 3 feature)

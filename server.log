@@ -1,1 +1,1 @@
-Error: Os { code: 98, kind: AddrInUse, message: "Address already in use" }
+UltraCache listening on 0.0.0.0:6379
