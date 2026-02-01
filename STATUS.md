@@ -39,6 +39,7 @@
 - **Latency Tracking**: Rolling p99 latency per tenant (microseconds)
 - **Admin Stats Command**: `STATS` aggregates per-tenant metrics across shards
 - **Eviction Metrics**: Per-tenant eviction counter
+- **Tenant Listing**: `TENANTS` returns tenant quotas ✅
 
 ### Testing ✅
 - Native Python test clients (no Redis dependency)
@@ -51,6 +52,7 @@
 - Comprehensive multi-type integration test
 - Admin stats test suite
 - Noisy-neighbor load isolation test
+- Tenant listing test
 - Week 1 milestone validation suite
 
 ## File Structure

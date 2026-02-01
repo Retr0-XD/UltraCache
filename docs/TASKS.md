@@ -25,7 +25,7 @@ This list mirrors the roadmap milestones and can be converted into issues.
 ## 5) CPU & latency isolation
 - [x] Implement per-tenant CPU usage tracking
 - [x] Add throttling/backpressure when limits exceeded
-- [ ] Track per-tenant p99 latency (rolling window)
+- [x] Track per-tenant p99 latency (rolling window)
 
 ## 6) Data structures (v0.1 subset)
 - [x] Implement String data type + commands ✅
@@ -44,11 +44,11 @@ This list mirrors the roadmap milestones and can be converted into issues.
 - [ ] Define recovery flow (replay on startup)
 
 ## 9) Observability & ops
-- [ ] Expose metrics (per-tenant memory, CPU, latency, evictions)
-- [ ] Add admin endpoint (list tenants, quotas, stats)
+- [x] Expose metrics (per-tenant memory, CPU, latency, evictions)
+- [x] Add admin endpoint (list tenants, quotas, stats)
 - [ ] Add structured logging for command execution
 
 ## 10) Testing & benchmarking
 - [x] Unit tests for isolation boundaries ✅
 - [x] Correctness tests for data types & TTL ✅
-- [ ] Load tests for noisy-neighbor scenarios
+- [x] Load tests for noisy-neighbor scenarios

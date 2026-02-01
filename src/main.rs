@@ -18,6 +18,8 @@ async fn main() -> std::io::Result<()> {
     let registry = Arc::new(TenantRegistry::new());
     let runtime = RuntimeHandle::new(num_cpus::get());
 
+    let _ = registry.resolve_or_create("default");
+
     let listener = TcpListener::bind(DEFAULT_ADDR).await?;
     println!("UltraCache listening on {DEFAULT_ADDR}");
 
@@ -126,6 +128,29 @@ async fn handle_command(
                 }
                 None => RespValue::Error("ERR invalid token".to_string()),
             }
+        }
+        "TENANTS" => {
+            if cmd.len() != 1 {
+                return RespValue::Error("ERR wrong number of arguments for TENANTS".to_string());
+            }
+            let tenants = registry.list();
+            let mut entries: Vec<RespValue> = tenants
+                .into_iter()
+                .map(|tenant| {
+                    let entry = format!(
+                        "id={} memory_limit_bytes={} cpu_quota_micros={}",
+                        tenant.id, tenant.memory_limit_bytes, tenant.cpu_quota_micros_per_sec
+                    );
+                    RespValue::BulkString(Some(entry.into_bytes()))
+                })
+                .collect();
+            entries.sort_by(|a, b| match (a, b) {
+                (RespValue::BulkString(Some(left)), RespValue::BulkString(Some(right))) => {
+                    left.cmp(right)
+                }
+                _ => std::cmp::Ordering::Equal,
+            });
+            RespValue::Array(entries)
         }
         "GET" => {
             if cmd.len() != 2 {

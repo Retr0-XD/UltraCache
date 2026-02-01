@@ -37,6 +37,15 @@ impl TenantRegistry {
         guard.insert(token.to_string(), tenant.clone());
         Some(tenant)
     }
+
+    pub fn list(&self) -> Vec<Tenant> {
+        let guard = match self.inner.read() {
+            Ok(guard) => guard,
+            Err(_) => return Vec::new(),
+        };
+
+        guard.values().cloned().collect()
+    }
 }
 
 const DEFAULT_MEMORY_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
