@@ -20,7 +20,9 @@
 ### Data Operations ✅
 - **String Commands**: `PING`, `GET`, `SET`, `DEL`
 - **Hash Commands**: `HGET`, `HSET`, `HDEL` ✅
+- **Hash Increment**: `HINCRBY` ✅
 - **Set Commands**: `SADD`, `SREM`, `SMEMBERS` ✅
+- **Set Intersection**: `SINTER` ✅
 - **Sorted Set Commands**: `ZADD`, `ZREM`, `ZRANGE` ✅
 - **TTL Support**: `EXPIRE`, `TTL` with per-tenant expiration tracking
 - **Key Routing**: Hash-based routing to shards
@@ -44,6 +46,8 @@
 - TTL functionality tests
 - CPU throttling tests
 - Data type tests: Hash, Set, ZSet
+- Hash increment tests (HINCRBY)
+- Set intersection tests (SINTER)
 - Comprehensive multi-type integration test
 - Admin stats test suite
 - Noisy-neighbor load isolation test

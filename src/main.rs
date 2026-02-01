@@ -270,6 +270,29 @@ async fn handle_command(
                 )
                 .await
         }
+        "HINCRBY" => {
+            if cmd.len() != 4 {
+                return RespValue::Error("ERR wrong number of arguments for HINCRBY".to_string());
+            }
+            let delta = match cmd[3].parse::<i64>() {
+                Ok(delta) => delta,
+                Err(_) => {
+                    return RespValue::Error("ERR value is not an integer or out of range".to_string())
+                }
+            };
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Hincrby {
+                        key: cmd[1].clone(),
+                        field: cmd[2].clone(),
+                        delta,
+                    },
+                )
+                .await
+        }
         "SADD" => {
             if cmd.len() < 3 {
                 return RespValue::Error("ERR wrong number of arguments for SADD".to_string());
@@ -334,6 +357,19 @@ async fn handle_command(
                     Command::Smembers {
                         key: cmd[1].clone(),
                     },
+                )
+                .await
+        }
+        "SINTER" => {
+            if cmd.len() < 2 {
+                return RespValue::Error("ERR wrong number of arguments for SINTER".to_string());
+            }
+            runtime
+                .sinter(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    cmd[1..].to_vec(),
                 )
                 .await
         }

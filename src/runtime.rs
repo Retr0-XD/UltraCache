@@ -21,6 +21,7 @@ pub enum Command {
     Hget { key: String, field: String },
     Hset { key: String, field: String, value: Vec<u8> },
     Hdel { key: String, field: String },
+    Hincrby { key: String, field: String, delta: i64 },
     // Set commands
     Sadd { key: String, member: String },
     Srem { key: String, member: String },
@@ -138,6 +139,68 @@ impl ShardRuntime {
         }
     }
 
+    pub async fn sinter(
+        &self,
+        tenant_id: String,
+        tenant_limit_bytes: u64,
+        cpu_quota_micros: u64,
+        keys: Vec<String>,
+    ) -> RespValue {
+        if keys.is_empty() {
+            return RespValue::Array(vec![]);
+        }
+
+        let mut intersection: Option<HashSet<String>> = None;
+
+        for key in keys {
+            let resp = self
+                .execute(
+                    tenant_id.clone(),
+                    tenant_limit_bytes,
+                    cpu_quota_micros,
+                    Command::Smembers { key },
+                )
+                .await;
+
+            match resp {
+                RespValue::Array(values) => {
+                    let set: HashSet<String> = values
+                        .into_iter()
+                        .filter_map(|value| match value {
+                            RespValue::BulkString(Some(bytes)) => {
+                                String::from_utf8(bytes).ok()
+                            }
+                            _ => None,
+                        })
+                        .collect();
+
+                    intersection = match intersection {
+                        None => Some(set),
+                        Some(current) => Some(
+                            current
+                                .intersection(&set)
+                                .cloned()
+                                .collect::<HashSet<String>>(),
+                        ),
+                    };
+
+                    if intersection.as_ref().map_or(true, |s| s.is_empty()) {
+                        return RespValue::Array(vec![]);
+                    }
+                }
+                RespValue::Error(msg) => return RespValue::Error(msg),
+                _ => return RespValue::Error("ERR invalid response".to_string()),
+            }
+        }
+
+        let members: Vec<RespValue> = intersection
+            .unwrap_or_default()
+            .into_iter()
+            .map(|m| RespValue::BulkString(Some(m.into_bytes())))
+            .collect();
+        RespValue::Array(members)
+    }
+
     fn route_shard(&self, tenant_id: &str, command: &Command) -> usize {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         tenant_id.hash(&mut hasher);
@@ -150,6 +213,7 @@ impl ShardRuntime {
             | Command::Hget { key, .. }
             | Command::Hset { key, .. }
             | Command::Hdel { key, .. }
+            | Command::Hincrby { key, .. }
             | Command::Sadd { key, .. }
             | Command::Srem { key, .. }
             | Command::Smembers { key }
@@ -386,6 +450,52 @@ fn handle_command(
             } else {
                 RespValue::Integer(0)
             }
+        }
+        Command::Hincrby { key, field, delta } => {
+            let k = tenant_key(&tenant_id, &key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.cache.pop(&k);
+                } else {
+                    match &mut entry.data {
+                        EntryData::Hash(map) => {
+                            let current = match map.get(&field) {
+                                Some(val) => match std::str::from_utf8(val)
+                                    .ok()
+                                    .and_then(|s| s.parse::<i64>().ok())
+                                {
+                                    Some(num) => num,
+                                    None => {
+                                        return RespValue::Error(
+                                            "ERR hash value is not an integer".to_string(),
+                                        )
+                                    }
+                                },
+                                None => 0,
+                            };
+                            let next = current.saturating_add(delta);
+                            map.insert(field, next.to_string().into_bytes());
+                            return RespValue::Integer(next);
+                        }
+                        _ => {
+                            return RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            )
+                        }
+                    }
+                }
+            }
+
+            let mut map = HashMap::new();
+            let next = delta;
+            map.insert(field, next.to_string().into_bytes());
+            let entry = Entry {
+                data: EntryData::Hash(map),
+                expires_at: None,
+            };
+            state.cache.put(k, entry);
+            RespValue::Integer(next)
         }
         // Set commands
         Command::Sadd { key, member } => {
