@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{HashMap, HashSet, BTreeMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -22,14 +22,28 @@ pub enum Command {
     Hset { key: String, field: String, value: Vec<u8> },
     Hdel { key: String, field: String },
     Hincrby { key: String, field: String, delta: i64 },
+    Hgetall { key: String },
+    Hkeys { key: String },
+    Hvals { key: String },
     // Set commands
     Sadd { key: String, member: String },
     Srem { key: String, member: String },
     Smembers { key: String },
+    Scard { key: String },
+    Sismember { key: String, member: String },
     // Sorted Set commands
     Zadd { key: String, score: f64, member: String },
     Zrem { key: String, member: String },
     Zrange { key: String, start: i64, stop: i64 },
+    Zcard { key: String },
+    Zscore { key: String, member: String },
+    // List commands
+    Lpush { key: String, value: Vec<u8> },
+    Rpush { key: String, value: Vec<u8> },
+    Lpop { key: String },
+    Rpop { key: String },
+    Llen { key: String },
+    Lrange { key: String, start: i64, stop: i64 },
 }
 
 #[derive(Debug)]
@@ -214,12 +228,25 @@ impl ShardRuntime {
             | Command::Hset { key, .. }
             | Command::Hdel { key, .. }
             | Command::Hincrby { key, .. }
+            | Command::Hgetall { key }
+            | Command::Hkeys { key }
+            | Command::Hvals { key }
             | Command::Sadd { key, .. }
             | Command::Srem { key, .. }
             | Command::Smembers { key }
+            | Command::Scard { key }
+            | Command::Sismember { key, .. }
             | Command::Zadd { key, .. }
             | Command::Zrem { key, .. }
-            | Command::Zrange { key, .. } => {
+            | Command::Zrange { key, .. }
+            | Command::Zcard { key }
+            | Command::Zscore { key, .. }
+            | Command::Lpush { key, .. }
+            | Command::Rpush { key, .. }
+            | Command::Lpop { key }
+            | Command::Rpop { key }
+            | Command::Llen { key }
+            | Command::Lrange { key, .. } => {
                 key.hash(&mut hasher)
             }
             Command::Ping | Command::Stats => {}
@@ -640,6 +667,303 @@ fn handle_command(
                 None => RespValue::Array(vec![]),
             }
         }
+        Command::Zcard { key } => {
+            let k = tenant_key(&tenant_id, &key);
+            match state.cache.get(&k) {
+                Some(entry) => {
+                    if TenantState::is_expired(entry) {
+                        state.cache.pop(&k);
+                        RespValue::Integer(0)
+                    } else {
+                        match &entry.data {
+                            EntryData::ZSet(zset) => RespValue::Integer(zset.len() as i64),
+                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        }
+                    }
+                }
+                None => RespValue::Integer(0),
+            }
+        }
+        Command::Zscore { key, member } => {
+            let k = tenant_key(&tenant_id, &key);
+            match state.cache.get(&k) {
+                Some(entry) => {
+                    if TenantState::is_expired(entry) {
+                        state.cache.pop(&k);
+                        RespValue::BulkString(None)
+                    } else {
+                        match &entry.data {
+                            EntryData::ZSet(zset) => {
+                                if let Some(score) = zset.get(&member) {
+                                    RespValue::BulkString(Some(score.to_string().into_bytes()))
+                                } else {
+                                    RespValue::BulkString(None)
+                                }
+                            }
+                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        }
+                    }
+                }
+                None => RespValue::BulkString(None),
+            }
+        }
+        // Hash extensions
+        Command::Hgetall { key } => {
+            let k = tenant_key(&tenant_id, &key);
+            match state.cache.get(&k) {
+                Some(entry) => {
+                    if TenantState::is_expired(entry) {
+                        state.cache.pop(&k);
+                        RespValue::Array(vec![])
+                    } else {
+                        match &entry.data {
+                            EntryData::Hash(hash) => {
+                                let mut result = Vec::new();
+                                for (field, value) in hash {
+                                    result.push(RespValue::BulkString(Some(field.as_bytes().to_vec())));
+                                    result.push(RespValue::BulkString(Some(value.clone())));
+                                }
+                                RespValue::Array(result)
+                            }
+                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        }
+                    }
+                }
+                None => RespValue::Array(vec![]),
+            }
+        }
+        Command::Hkeys { key } => {
+            let k = tenant_key(&tenant_id, &key);
+            match state.cache.get(&k) {
+                Some(entry) => {
+                    if TenantState::is_expired(entry) {
+                        state.cache.pop(&k);
+                        RespValue::Array(vec![])
+                    } else {
+                        match &entry.data {
+                            EntryData::Hash(hash) => {
+                                let keys: Vec<RespValue> = hash.keys()
+                                    .map(|k| RespValue::BulkString(Some(k.as_bytes().to_vec())))
+                                    .collect();
+                                RespValue::Array(keys)
+                            }
+                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        }
+                    }
+                }
+                None => RespValue::Array(vec![]),
+            }
+        }
+        Command::Hvals { key } => {
+            let k = tenant_key(&tenant_id, &key);
+            match state.cache.get(&k) {
+                Some(entry) => {
+                    if TenantState::is_expired(entry) {
+                        state.cache.pop(&k);
+                        RespValue::Array(vec![])
+                    } else {
+                        match &entry.data {
+                            EntryData::Hash(hash) => {
+                                let values: Vec<RespValue> = hash.values()
+                                    .map(|v| RespValue::BulkString(Some(v.clone())))
+                                    .collect();
+                                RespValue::Array(values)
+                            }
+                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        }
+                    }
+                }
+                None => RespValue::Array(vec![]),
+            }
+        }
+        // Set extensions
+        Command::Scard { key } => {
+            let k = tenant_key(&tenant_id, &key);
+            match state.cache.get(&k) {
+                Some(entry) => {
+                    if TenantState::is_expired(entry) {
+                        state.cache.pop(&k);
+                        RespValue::Integer(0)
+                    } else {
+                        match &entry.data {
+                            EntryData::Set(set) => RespValue::Integer(set.len() as i64),
+                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        }
+                    }
+                }
+                None => RespValue::Integer(0),
+            }
+        }
+        Command::Sismember { key, member } => {
+            let k = tenant_key(&tenant_id, &key);
+            match state.cache.get(&k) {
+                Some(entry) => {
+                    if TenantState::is_expired(entry) {
+                        state.cache.pop(&k);
+                        RespValue::Integer(0)
+                    } else {
+                        match &entry.data {
+                            EntryData::Set(set) => RespValue::Integer(if set.contains(&member) { 1 } else { 0 }),
+                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        }
+                    }
+                }
+                None => RespValue::Integer(0),
+            }
+        }
+        // List commands
+        Command::Lpush { key, value } => {
+            let k = tenant_key(&tenant_id, &key);
+            
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.cache.pop(&k);
+                } else {
+                    match &mut entry.data {
+                        EntryData::List(list) => {
+                            list.push_front(value);
+                            return RespValue::Integer(list.len() as i64);
+                        }
+                        _ => return RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                    }
+                }
+            }
+            
+            // Create new list
+            let mut list = VecDeque::new();
+            list.push_front(value);
+            let entry_size = entry_size_bytes(&k, &list.front().unwrap());
+            if entry_size > state.limit_bytes {
+                return RespValue::Error("ERR tenant memory limit exceeded".to_string());
+            }
+            
+            let entry = Entry {
+                data: EntryData::List(list.clone()),
+                expires_at: None,
+            };
+            state.cache.put(k, entry);
+            state.used_bytes = state.used_bytes.saturating_add(entry_size);
+            RespValue::Integer(list.len() as i64)
+        }
+        Command::Rpush { key, value } => {
+            let k = tenant_key(&tenant_id, &key);
+            
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.cache.pop(&k);
+                } else {
+                    match &mut entry.data {
+                        EntryData::List(list) => {
+                            list.push_back(value);
+                            return RespValue::Integer(list.len() as i64);
+                        }
+                        _ => return RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                    }
+                }
+            }
+            
+            // Create new list
+            let mut list = VecDeque::new();
+            list.push_back(value);
+            let entry_size = entry_size_bytes(&k, &list.back().unwrap());
+            if entry_size > state.limit_bytes {
+                return RespValue::Error("ERR tenant memory limit exceeded".to_string());
+            }
+            
+            let entry = Entry {
+                data: EntryData::List(list.clone()),
+                expires_at: None,
+            };
+            state.cache.put(k, entry);
+            state.used_bytes = state.used_bytes.saturating_add(entry_size);
+            RespValue::Integer(list.len() as i64)
+        }
+        Command::Lpop { key } => {
+            let k = tenant_key(&tenant_id, &key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.cache.pop(&k);
+                    return RespValue::BulkString(None);
+                }
+                match &mut entry.data {
+                    EntryData::List(list) => {
+                        if let Some(value) = list.pop_front() {
+                            RespValue::BulkString(Some(value))
+                        } else {
+                            RespValue::BulkString(None)
+                        }
+                    }
+                    _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                }
+            } else {
+                RespValue::BulkString(None)
+            }
+        }
+        Command::Rpop { key } => {
+            let k = tenant_key(&tenant_id, &key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.cache.pop(&k);
+                    return RespValue::BulkString(None);
+                }
+                match &mut entry.data {
+                    EntryData::List(list) => {
+                        if let Some(value) = list.pop_back() {
+                            RespValue::BulkString(Some(value))
+                        } else {
+                            RespValue::BulkString(None)
+                        }
+                    }
+                    _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                }
+            } else {
+                RespValue::BulkString(None)
+            }
+        }
+        Command::Llen { key } => {
+            let k = tenant_key(&tenant_id, &key);
+            match state.cache.get(&k) {
+                Some(entry) => {
+                    if TenantState::is_expired(entry) {
+                        state.cache.pop(&k);
+                        RespValue::Integer(0)
+                    } else {
+                        match &entry.data {
+                            EntryData::List(list) => RespValue::Integer(list.len() as i64),
+                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        }
+                    }
+                }
+                None => RespValue::Integer(0),
+            }
+        }
+        Command::Lrange { key, start, stop } => {
+            let k = tenant_key(&tenant_id, &key);
+            match state.cache.get(&k) {
+                Some(entry) => {
+                    if TenantState::is_expired(entry) {
+                        state.cache.pop(&k);
+                        return RespValue::Array(vec![]);
+                    }
+                    match &entry.data {
+                        EntryData::List(list) => {
+                            let len = list.len() as i64;
+                            let start_idx = if start < 0 { (len + start).max(0) } else { start.min(len) } as usize;
+                            let stop_idx = if stop < 0 { (len + stop + 1).max(0) } else { (stop + 1).min(len) } as usize;
+                            
+                            let result: Vec<RespValue> = list.iter()
+                                .skip(start_idx)
+                                .take(stop_idx.saturating_sub(start_idx))
+                                .map(|v| RespValue::BulkString(Some(v.clone())))
+                                .collect();
+                            RespValue::Array(result)
+                        }
+                        _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                    }
+                }
+                None => RespValue::Array(vec![]),
+            }
+        }
     };
     
     // Record CPU time and latency
@@ -779,6 +1103,7 @@ enum EntryData {
     Hash(std::collections::HashMap<String, Vec<u8>>),
     Set(std::collections::HashSet<String>),
     ZSet(std::collections::BTreeMap<String, f64>),
+    List(VecDeque<Vec<u8>>),
 }
 
 struct TenantState {
@@ -882,6 +1207,9 @@ fn calculate_entry_size(key: &str, data: &EntryData) -> u64 {
             map.iter()
                 .map(|(member, _score)| member.len() as u64 + 8)
                 .sum::<u64>()
+        }
+        EntryData::List(list) => {
+            list.iter().map(|v| v.len() as u64).sum::<u64>()
         }
     };
     key_size + data_size

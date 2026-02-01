@@ -1,6 +1,7 @@
 mod resp;
 mod runtime;
 mod tenant;
+mod persistence;
 
 use std::sync::Arc;
 
@@ -469,6 +470,210 @@ async fn handle_command(
                         *tenant_limit_bytes,
                         *tenant_cpu_quota_micros,
                         Command::Zrange {
+                            key: cmd[1].clone(),
+                            start,
+                            stop,
+                        },
+                    )
+                    .await,
+                _ => RespValue::Error("ERR value is not an integer or out of range".to_string()),
+            }
+        }
+        "ZCARD" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for ZCARD".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Zcard {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "ZSCORE" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for ZSCORE".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Zscore {
+                        key: cmd[1].clone(),
+                        member: cmd[2].clone(),
+                    },
+                )
+                .await
+        }
+        "HGETALL" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for HGETALL".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Hgetall {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "HKEYS" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for HKEYS".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Hkeys {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "HVALS" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for HVALS".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Hvals {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "SCARD" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for SCARD".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Scard {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "SISMEMBER" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for SISMEMBER".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Sismember {
+                        key: cmd[1].clone(),
+                        member: cmd[2].clone(),
+                    },
+                )
+                .await
+        }
+        "LPUSH" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for LPUSH".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Lpush {
+                        key: cmd[1].clone(),
+                        value: cmd[2].as_bytes().to_vec(),
+                    },
+                )
+                .await
+        }
+        "RPUSH" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for RPUSH".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Rpush {
+                        key: cmd[1].clone(),
+                        value: cmd[2].as_bytes().to_vec(),
+                    },
+                )
+                .await
+        }
+        "LPOP" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for LPOP".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Lpop {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "RPOP" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for RPOP".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Rpop {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "LLEN" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for LLEN".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Llen {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "LRANGE" => {
+            if cmd.len() != 4 {
+                return RespValue::Error("ERR wrong number of arguments for LRANGE".to_string());
+            }
+            match (cmd[2].parse::<i64>(), cmd[3].parse::<i64>()) {
+                (Ok(start), Ok(stop)) => runtime
+                    .execute(
+                        tenant_id.clone(),
+                        *tenant_limit_bytes,
+                        *tenant_cpu_quota_micros,
+                        Command::Lrange {
                             key: cmd[1].clone(),
                             start,
                             stop,
