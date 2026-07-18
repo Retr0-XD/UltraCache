@@ -364,6 +364,88 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed configuration options.
 
 ---
 
+## Analysis: Usability, Security, Flexibility & Roadmap
+
+This section evaluates UltraCache across four axes and outlines where v2 should
+go. It is written for operators and architects deciding whether (and how) to
+adopt the project.
+
+### Usability
+
+- **Drop-in Redis compatibility** — Any Redis client (redis-cli, Lettuce,
+  redis-py, go-redis, Jedis) works unchanged over the RESP protocol.
+- **Docker Hub images** — Prebuilt multi-arch images are published to
+  `docker.io/retr0xd/ultracache` (amd64 + arm64). Pull and run:
+  ```bash
+  docker pull retr0xd/ultracache:latest
+  docker run -p 6379:6379 retr0xd/ultracache:latest
+  ```
+- **Compose demo** — The companion [StateLedger](https://github.com/Retr0-XD/StateLedger)
+  repo ships `docker-compose.yml` that starts both services with the audit
+  bridge wired via `ULTRACACHE_LEDGER_URL=http://stateledger:8080`.
+- **Zero-config defaults** — Binds `0.0.0.0:6379` and runs without a config
+  file; every knob has a flag and an env-var equivalent.
+- **Healthcheck** — The image `HEALTHCHECK` issues a real `PING` over TCP, so
+  orchestrators get a genuine readiness signal rather than a process check.
+
+### Security
+
+- **Non-root by default** — The runtime image runs as UID `10001`
+  (`ultracache`), reducing blast radius if the process is compromised.
+- **No OpenSSL dependency** — The audit bridge uses `reqwest` with `rustls-tls`,
+  avoiding the CVE surface of OpenSSL and simplifying patching.
+- **Best-effort, fail-open bridge** — A StateLedger outage never blocks or
+  fails a cache command; the bridge degrades to a no-op and logs the drop.
+  (Operators who need guaranteed audit should monitor bridge health and treat
+  StateLedger as a required dependency.)
+- **Transport** — RESP is plain TCP. Terminate TLS at a proxy (stunnel, Envoy,
+  or a service mesh) in production; do not expose 6379 to untrusted networks.
+- **Multi-tenancy isolation** — Per-tenant memory and CPU budgets prevent one
+  tenant from starving others; enable `AUTH` so tenants are scoped.
+
+### Flexibility
+
+- **Config layering** — built-in defaults < config file < CLI flags < env vars,
+  so the same image adapts to any environment without rebuilds.
+- **Optional durability** — AOF can be toggled per deployment (`always`,
+  `everysec`, `no`) to trade durability for throughput.
+- **Optional audit** — The StateLedger bridge is off unless
+  `ULTRACACHE_LEDGER_URL` is set, so single-node caches pay no overhead.
+- **Shard tuning** — `--shards` lets you match concurrency to the host's core
+  count or a container CPU limit.
+
+### v2 Improvement Spots
+
+1. **Replication & cluster mode** — The single-node design is the main scaling
+   ceiling; leader-replica or gossip-based clustering would unlock horizontal
+   scale and HA.
+2. **TLS-native listener** — First-class TLS (and mTLS) on the RESP port instead
+   of relying on an external proxy.
+3. **Observability** — Expose Prometheus metrics (ops/sec, hit rate, shard
+   latency, bridge drop count) and structured logs for production debugging.
+4. **Guaranteed audit mode** — A `fail-closed` bridge option that blocks the
+   command (or queues durably) when StateLedger is unreachable, for
+   compliance-critical deployments.
+5. **Web UI / admin console** — A read-only dashboard for tenants, memory, and
+   shard health.
+6. **Richer data types** — Streams, bitmaps, and HyperLogLog to broaden
+   drop-in compatibility with more Redis workloads.
+
+### Best Use Cases
+
+- **High-throughput caching** — Sub-ms, shard-per-core design suits hot-path
+  read/write caching (sessions, feature flags, API responses).
+- **Multi-tenant SaaS** — Per-tenant memory/CPU budgets keep noisy neighbors in
+  check without separate instances.
+- **Verifiable cache / audit** — Paired with StateLedger, every mutation becomes
+  a tamper-evident `cache.audit` record for compliance and forensic replay.
+- **Edge / single-node** — Small static binary and tiny image footprint make it
+  ideal for edge and sidecar deployments where a full Redis cluster is overkill.
+- **Drop-in Redis replacement** — When you need Redis semantics without the
+  operational weight of a clustered Redis, especially with audit requirements.
+
+---
+
 ## Contributing
 
 Contributions are welcome! Areas of interest:
