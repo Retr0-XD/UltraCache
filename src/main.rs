@@ -298,19 +298,26 @@ async fn handle_command(
                 .await
         }
         "DEL" => {
-            if cmd.len() != 2 {
+            if cmd.len() < 2 {
                 return RespValue::Error("ERR wrong number of arguments for DEL".to_string());
             }
-            runtime
-                .execute(
-                    tenant_id.clone(),
-                    *tenant_limit_bytes,
-                    *tenant_cpu_quota_micros,
-                    Command::Del {
-                        key: cmd[1].clone(),
-                    },
-                )
-                .await
+            let mut removed: i64 = 0;
+            for key in cmd[1..].iter() {
+                match runtime
+                    .execute(
+                        tenant_id.clone(),
+                        *tenant_limit_bytes,
+                        *tenant_cpu_quota_micros,
+                        Command::Del { key: key.clone() },
+                    )
+                    .await
+                {
+                    RespValue::Integer(n) => removed += n,
+                    RespValue::Error(_) => continue,
+                    _ => {}
+                }
+            }
+            RespValue::Integer(removed)
         }
         "EXPIRE" => {
             if cmd.len() != 3 {
@@ -933,7 +940,7 @@ async fn handle_command(
                 .await
         }
         "LPUSH" => {
-            if cmd.len() != 3 {
+            if cmd.len() < 3 {
                 return RespValue::Error("ERR wrong number of arguments for LPUSH".to_string());
             }
             runtime
@@ -943,13 +950,13 @@ async fn handle_command(
                     *tenant_cpu_quota_micros,
                     Command::Lpush {
                         key: cmd[1].clone(),
-                        value: cmd[2].as_bytes().to_vec(),
+                        values: cmd[2..].iter().map(|a| a.as_bytes().to_vec()).collect(),
                     },
                 )
                 .await
         }
         "LPUSHX" => {
-            if cmd.len() != 3 {
+            if cmd.len() < 3 {
                 return RespValue::Error("ERR wrong number of arguments for LPUSHX".to_string());
             }
             runtime
@@ -959,13 +966,13 @@ async fn handle_command(
                     *tenant_cpu_quota_micros,
                     Command::Lpushx {
                         key: cmd[1].clone(),
-                        value: cmd[2].as_bytes().to_vec(),
+                        values: cmd[2..].iter().map(|a| a.as_bytes().to_vec()).collect(),
                     },
                 )
                 .await
         }
         "RPUSH" => {
-            if cmd.len() != 3 {
+            if cmd.len() < 3 {
                 return RespValue::Error("ERR wrong number of arguments for RPUSH".to_string());
             }
             runtime
@@ -975,13 +982,13 @@ async fn handle_command(
                     *tenant_cpu_quota_micros,
                     Command::Rpush {
                         key: cmd[1].clone(),
-                        value: cmd[2].as_bytes().to_vec(),
+                        values: cmd[2..].iter().map(|a| a.as_bytes().to_vec()).collect(),
                     },
                 )
                 .await
         }
         "RPUSHX" => {
-            if cmd.len() != 3 {
+            if cmd.len() < 3 {
                 return RespValue::Error("ERR wrong number of arguments for RPUSHX".to_string());
             }
             runtime
@@ -991,7 +998,7 @@ async fn handle_command(
                     *tenant_cpu_quota_micros,
                     Command::Rpushx {
                         key: cmd[1].clone(),
-                        value: cmd[2].as_bytes().to_vec(),
+                        values: cmd[2..].iter().map(|a| a.as_bytes().to_vec()).collect(),
                     },
                 )
                 .await

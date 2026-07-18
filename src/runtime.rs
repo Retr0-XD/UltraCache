@@ -153,19 +153,19 @@ pub enum Command {
     // List commands
     Lpush {
         key: String,
-        value: Vec<u8>,
+        values: Vec<Vec<u8>>,
     },
     Lpushx {
         key: String,
-        value: Vec<u8>,
+        values: Vec<Vec<u8>>,
     },
     Rpush {
         key: String,
-        value: Vec<u8>,
+        values: Vec<Vec<u8>>,
     },
     Rpushx {
         key: String,
-        value: Vec<u8>,
+        values: Vec<Vec<u8>>,
     },
     Lindex {
         key: String,
@@ -443,6 +443,138 @@ impl ShardRuntime {
         cpu_quota_micros: u64,
         command: Command,
     ) -> RespValue {
+        // SMOVE spans two keys (source and destination) that may live on
+        // different shards. A single-shard handler cannot move a member across
+        // shards, so we coordinate it here: remove from the source shard, then
+        // (if removed) add to the destination shard. The member value is known
+        // up front, so no cross-shard data transfer is required.
+        if let Command::Smove {
+            source,
+            destination,
+            member,
+        } = &command
+        {
+            let src_idx = self.route_shard(
+                &tenant_id,
+                &Command::Srem {
+                    key: source.clone(),
+                    member: member.clone(),
+                },
+            );
+            let (tx, rx) = oneshot::channel();
+            if self.shards[src_idx]
+                .send(ShardRequest {
+                    tenant_id: tenant_id.clone(),
+                    tenant_limit_bytes,
+                    cpu_quota_micros,
+                    command: Command::Srem {
+                        key: source.clone(),
+                        member: member.clone(),
+                    },
+                    respond_to: tx,
+                })
+                .await
+                .is_err()
+            {
+                return RespValue::Error("ERR shard unavailable".to_string());
+            }
+            let removed = match rx.await {
+                Ok(RespValue::Integer(n)) => n,
+                Ok(RespValue::Error(_)) => 0,
+                _ => 0,
+            };
+            if removed != 1 {
+                return RespValue::Integer(0);
+            }
+            let dst_idx = self.route_shard(
+                &tenant_id,
+                &Command::Sadd {
+                    key: destination.clone(),
+                    member: member.clone(),
+                },
+            );
+            let (tx, rx) = oneshot::channel();
+            if self.shards[dst_idx]
+                .send(ShardRequest {
+                    tenant_id,
+                    tenant_limit_bytes,
+                    cpu_quota_micros,
+                    command: Command::Sadd {
+                        key: destination.clone(),
+                        member: member.clone(),
+                    },
+                    respond_to: tx,
+                })
+                .await
+                .is_err()
+            {
+                return RespValue::Error("ERR shard unavailable".to_string());
+            }
+            return match rx.await {
+                Ok(v) => v,
+                Err(_) => RespValue::Error("ERR shard response failed".to_string()),
+            };
+        }
+
+        // FLUSHDB / DBSIZE / RANDOMKEY are global (key-less) commands that must
+        // operate across every shard, not just the one implied by the tenant-id
+        // hash. Route them by broadcasting to all shards and aggregating.
+        if matches!(
+            &command,
+            Command::Flushdb | Command::Dbsize | Command::Randomkey
+        ) {
+            let mut receivers = Vec::with_capacity(self.shards.len());
+            for tx in &self.shards {
+                let (resp_tx, resp_rx) = oneshot::channel();
+                let req = ShardRequest {
+                    tenant_id: tenant_id.clone(),
+                    tenant_limit_bytes,
+                    cpu_quota_micros,
+                    command: command.clone(),
+                    respond_to: resp_tx,
+                };
+                if tx.send(req).await.is_err() {
+                    return RespValue::Error("ERR shard unavailable".to_string());
+                }
+                receivers.push(resp_rx);
+            }
+            match &command {
+                Command::Flushdb => {
+                    for rx in receivers {
+                        if let Ok(RespValue::Error(msg)) = rx.await {
+                            return RespValue::Error(msg);
+                        }
+                    }
+                    return RespValue::SimpleString("OK".to_string());
+                }
+                Command::Dbsize => {
+                    let mut total: i64 = 0;
+                    for rx in receivers {
+                        match rx.await {
+                            Ok(RespValue::Integer(n)) => total += n,
+                            Ok(RespValue::Error(msg)) => return RespValue::Error(msg),
+                            _ => return RespValue::Error("ERR invalid response".to_string()),
+                        }
+                    }
+                    return RespValue::Integer(total);
+                }
+                Command::Randomkey => {
+                    for rx in receivers {
+                        match rx.await {
+                            Ok(RespValue::BulkString(Some(bytes))) => {
+                                return RespValue::BulkString(Some(bytes));
+                            }
+                            Ok(RespValue::BulkString(None)) => continue,
+                            Ok(RespValue::Error(msg)) => return RespValue::Error(msg),
+                            _ => return RespValue::Error("ERR invalid response".to_string()),
+                        }
+                    }
+                    return RespValue::BulkString(None);
+                }
+                _ => unreachable!(),
+            }
+        }
+
         let shard_idx = self.route_shard(&tenant_id, &command);
         let (tx, rx) = oneshot::channel();
         let req = ShardRequest {
@@ -599,13 +731,12 @@ impl ShardRuntime {
             Command::Zrank { key, .. } | Command::Zrevrange { key, .. } => {
                 key.hash(&mut hasher);
             }
-            Command::Smove {
-                source,
-                destination,
-                ..
-            } => {
+            Command::Smove { source, .. } => {
+                // Route by the source key only so the source set is found on the
+                // same shard where it was created (e.g. by SADD). Hashing the
+                // destination too would send SMOVE to a different shard and the
+                // source key would appear missing.
                 source.hash(&mut hasher);
-                destination.hash(&mut hasher);
             }
             Command::Flushdb
             | Command::Ping
@@ -1787,17 +1918,22 @@ fn handle_command(
             }
         }
         // List commands
-        Command::Lpush { ref key, ref value } => {
+        Command::Lpush {
+            ref key,
+            ref values,
+        } => {
             let k = tenant_key(&tenant_id, key);
 
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
                     state.remove(&k);
                 } else if let EntryData::List(list) = &mut entry.data {
-                    list.push_front(value.clone());
-                    let added = (k.len() + value.len()) as u64;
-                    entry.size = entry.size.saturating_add(added);
-                    state.used_bytes = state.used_bytes.saturating_add(added);
+                    for value in values.iter().rev() {
+                        list.push_front(value.clone());
+                        let added = (k.len() + value.len()) as u64;
+                        entry.size = entry.size.saturating_add(added);
+                        state.used_bytes = state.used_bytes.saturating_add(added);
+                    }
                     return RespValue::Integer(list.len() as i64);
                 } else {
                     return RespValue::Error(
@@ -1809,7 +1945,9 @@ fn handle_command(
 
             // Create new list
             let mut list = VecDeque::new();
-            list.push_front(value.clone());
+            for value in values.iter() {
+                list.push_front(value.clone());
+            }
             let entry_size =
                 calculate_entry_size(&k, &EntryData::List(list.iter().cloned().collect()));
             if entry_size > state.limit_bytes {
@@ -1823,19 +1961,24 @@ fn handle_command(
             };
             state.cache.put(k, entry);
             state.used_bytes = state.used_bytes.saturating_add(entry_size);
-            RespValue::Integer(1)
+            RespValue::Integer(values.len() as i64)
         }
-        Command::Rpush { ref key, ref value } => {
+        Command::Rpush {
+            ref key,
+            ref values,
+        } => {
             let k = tenant_key(&tenant_id, key);
 
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
                     state.remove(&k);
                 } else if let EntryData::List(list) = &mut entry.data {
-                    list.push_back(value.clone());
-                    let added = (k.len() + value.len()) as u64;
-                    entry.size = entry.size.saturating_add(added);
-                    state.used_bytes = state.used_bytes.saturating_add(added);
+                    for value in values.iter() {
+                        list.push_back(value.clone());
+                        let added = (k.len() + value.len()) as u64;
+                        entry.size = entry.size.saturating_add(added);
+                        state.used_bytes = state.used_bytes.saturating_add(added);
+                    }
                     return RespValue::Integer(list.len() as i64);
                 } else {
                     return RespValue::Error(
@@ -1847,7 +1990,9 @@ fn handle_command(
 
             // Create new list
             let mut list = VecDeque::new();
-            list.push_back(value.clone());
+            for value in values.iter() {
+                list.push_back(value.clone());
+            }
             let entry_size =
                 calculate_entry_size(&k, &EntryData::List(list.iter().cloned().collect()));
             if entry_size > state.limit_bytes {
@@ -1861,9 +2006,12 @@ fn handle_command(
             };
             state.cache.put(k, entry);
             state.used_bytes = state.used_bytes.saturating_add(entry_size);
-            RespValue::Integer(1)
+            RespValue::Integer(values.len() as i64)
         }
-        Command::Lpushx { ref key, ref value } => {
+        Command::Lpushx {
+            ref key,
+            ref values,
+        } => {
             let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
@@ -1871,10 +2019,12 @@ fn handle_command(
                     return RespValue::Integer(0);
                 }
                 if let EntryData::List(list) = &mut entry.data {
-                    list.push_front(value.clone());
-                    let added = (k.len() + value.len()) as u64;
-                    entry.size = entry.size.saturating_add(added);
-                    state.used_bytes = state.used_bytes.saturating_add(added);
+                    for value in values.iter().rev() {
+                        list.push_front(value.clone());
+                        let added = (k.len() + value.len()) as u64;
+                        entry.size = entry.size.saturating_add(added);
+                        state.used_bytes = state.used_bytes.saturating_add(added);
+                    }
                     return RespValue::Integer(list.len() as i64);
                 } else {
                     return RespValue::Error(
@@ -1885,7 +2035,10 @@ fn handle_command(
             }
             RespValue::Integer(0)
         }
-        Command::Rpushx { ref key, ref value } => {
+        Command::Rpushx {
+            ref key,
+            ref values,
+        } => {
             let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
@@ -1893,10 +2046,12 @@ fn handle_command(
                     return RespValue::Integer(0);
                 }
                 if let EntryData::List(list) = &mut entry.data {
-                    list.push_back(value.clone());
-                    let added = (k.len() + value.len()) as u64;
-                    entry.size = entry.size.saturating_add(added);
-                    state.used_bytes = state.used_bytes.saturating_add(added);
+                    for value in values.iter() {
+                        list.push_back(value.clone());
+                        let added = (k.len() + value.len()) as u64;
+                        entry.size = entry.size.saturating_add(added);
+                        state.used_bytes = state.used_bytes.saturating_add(added);
+                    }
                     return RespValue::Integer(list.len() as i64);
                 } else {
                     return RespValue::Error(
@@ -2467,6 +2622,7 @@ fn handle_command(
             info.push_str("# Server\r\n");
             info.push_str("ultracache_version:1.0.0\r\n");
             info.push_str("mode:standalone\r\n");
+            info.push_str(&format!("tenant_id:{}\r\n", tenant_id));
             info.push_str("# Clients\r\n");
             info.push_str("connected_clients:0\r\n");
             info.push_str("# Memory\r\n");
@@ -2847,26 +3003,34 @@ fn command_to_args(cmd: &Command) -> Option<Vec<String>> {
             min.clone(),
             max.clone(),
         ]),
-        Command::Lpush { key, value } => Some(vec![
-            "LPUSH".to_string(),
-            key.clone(),
-            String::from_utf8_lossy(value).into_owned(),
-        ]),
-        Command::Lpushx { key, value } => Some(vec![
-            "LPUSHX".to_string(),
-            key.clone(),
-            String::from_utf8_lossy(value).into_owned(),
-        ]),
-        Command::Rpush { key, value } => Some(vec![
-            "RPUSH".to_string(),
-            key.clone(),
-            String::from_utf8_lossy(value).into_owned(),
-        ]),
-        Command::Rpushx { key, value } => Some(vec![
-            "RPUSHX".to_string(),
-            key.clone(),
-            String::from_utf8_lossy(value).into_owned(),
-        ]),
+        Command::Lpush { key, values } => {
+            let mut v = vec!["LPUSH".to_string(), key.clone()];
+            for val in values {
+                v.push(String::from_utf8_lossy(val).into_owned());
+            }
+            Some(v)
+        }
+        Command::Lpushx { key, values } => {
+            let mut v = vec!["LPUSHX".to_string(), key.clone()];
+            for val in values {
+                v.push(String::from_utf8_lossy(val).into_owned());
+            }
+            Some(v)
+        }
+        Command::Rpush { key, values } => {
+            let mut v = vec!["RPUSH".to_string(), key.clone()];
+            for val in values {
+                v.push(String::from_utf8_lossy(val).into_owned());
+            }
+            Some(v)
+        }
+        Command::Rpushx { key, values } => {
+            let mut v = vec!["RPUSHX".to_string(), key.clone()];
+            for val in values {
+                v.push(String::from_utf8_lossy(val).into_owned());
+            }
+            Some(v)
+        }
         Command::Lpop { key } => Some(vec!["LPOP".to_string(), key.clone()]),
         Command::Rpop { key } => Some(vec!["RPOP".to_string(), key.clone()]),
         Command::Lset { key, index, value } => Some(vec![
@@ -3060,21 +3224,21 @@ fn parse_args_to_command(args: &[String]) -> Option<Command> {
             min: args[2].clone(),
             max: args[3].clone(),
         },
-        "LPUSH" if args.len() == 3 => Command::Lpush {
+        "LPUSH" if args.len() >= 3 => Command::Lpush {
             key: args[1].clone(),
-            value: args[2].as_bytes().to_vec(),
+            values: args[2..].iter().map(|a| a.as_bytes().to_vec()).collect(),
         },
-        "RPUSH" if args.len() == 3 => Command::Rpush {
+        "RPUSH" if args.len() >= 3 => Command::Rpush {
             key: args[1].clone(),
-            value: args[2].as_bytes().to_vec(),
+            values: args[2..].iter().map(|a| a.as_bytes().to_vec()).collect(),
         },
-        "LPUSHX" if args.len() == 3 => Command::Lpushx {
+        "LPUSHX" if args.len() >= 3 => Command::Lpushx {
             key: args[1].clone(),
-            value: args[2].as_bytes().to_vec(),
+            values: args[2..].iter().map(|a| a.as_bytes().to_vec()).collect(),
         },
-        "RPUSHX" if args.len() == 3 => Command::Rpushx {
+        "RPUSHX" if args.len() >= 3 => Command::Rpushx {
             key: args[1].clone(),
-            value: args[2].as_bytes().to_vec(),
+            values: args[2..].iter().map(|a| a.as_bytes().to_vec()).collect(),
         },
         "LPOP" if args.len() == 2 => Command::Lpop {
             key: args[1].clone(),

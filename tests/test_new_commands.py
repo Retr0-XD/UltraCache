@@ -172,13 +172,13 @@ def test_zset_extended():
     assert recv_resp(s) == "11"
     # ZCOUNT in range
     send_cmd(s, "ZCOUNT", "z", "2", "13")
-    assert recv_resp(s) == 2  # b(2) and a(11)
+    assert recv_resp(s) == 3  # b(2), c(3), a(11)
     # ZRANGEBYSCORE
     send_cmd(s, "ZRANGEBYSCORE", "z", "2", "13")
-    assert recv_resp(s) == ["b", "a"]
+    assert recv_resp(s) == ["b", "c", "a"]
     # ZRANGEBYSCORE with exclusive bound
     send_cmd(s, "ZRANGEBYSCORE", "z", "(2", "13")
-    assert recv_resp(s) == ["a"]
+    assert recv_resp(s) == ["c", "a"]
     # ZREMRANGEBYSCORE
     send_cmd(s, "ZREMRANGEBYSCORE", "z", "0", "5")
     recv_resp(s)
@@ -254,7 +254,7 @@ def test_ttl_variants():
 
 def test_server_commands():
     s = fresh_sock()
-    send_cmd(s, "DEL", "srv1")
+    send_cmd(s, "FLUSHDB")
     recv_resp(s)
     send_cmd(s, "SET", "srv1", "v")
     recv_resp(s)

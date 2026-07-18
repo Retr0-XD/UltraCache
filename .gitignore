@@ -1,2 +1,5 @@
 /target/
 /server.log
+/server.err
+/server.dbg
+/System.IO.MemoryStream
