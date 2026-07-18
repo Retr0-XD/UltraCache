@@ -119,7 +119,10 @@ impl LedgerBridge {
     pub fn new(config: BridgeConfig) -> Self {
         let (tx, rx) = mpsc::unbounded_channel::<AuditEvent>();
         let worker = tokio::spawn(bridge_worker(config, rx));
-        let inner = BridgeInner { tx, _worker: worker };
+        let inner = BridgeInner {
+            tx,
+            _worker: worker,
+        };
         LedgerBridge {
             inner: Some(Arc::new(inner)),
         }
@@ -139,9 +142,7 @@ async fn bridge_worker(config: BridgeConfig, mut rx: mpsc::UnboundedReceiver<Aud
     // A single reusable HTTP client posts audit events to StateLedger's
     // REST API. The `reqwest` crate (rustls TLS backend) keeps the dependency
     // footprint small and avoids OpenSSL on Windows.
-    let client = reqwest::Client::builder()
-        .timeout(config.timeout)
-        .build();
+    let client = reqwest::Client::builder().timeout(config.timeout).build();
 
     let client = match client {
         Ok(c) => c,

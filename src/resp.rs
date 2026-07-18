@@ -103,7 +103,7 @@ pub fn parse_command(buf: &[u8]) -> Result<Option<(Vec<String>, usize)>, RespErr
             Some(v) => v,
             None => return Ok(None),
         };
-        let bulk_len = parse_int(len_line)? as isize;
+        let bulk_len = parse_int(len_line)?;
         if bulk_len < 0 {
             parts.push(String::new());
             offset = offset + 1 + len_consumed;

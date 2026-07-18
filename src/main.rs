@@ -1,9 +1,9 @@
+mod bridge;
+mod config;
+mod persistence;
 mod resp;
 mod runtime;
 mod tenant;
-mod persistence;
-mod config;
-mod bridge;
 
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ use tokio::net::TcpListener;
 
 use crate::config::Config;
 use crate::persistence::{AofManager, FsyncPolicy};
-use crate::resp::{parse_command, RespValue};
+use crate::resp::{RespValue, parse_command};
 use crate::runtime::{Command, RuntimeHandle};
 use crate::tenant::TenantRegistry;
 
@@ -27,10 +27,8 @@ async fn main() -> std::io::Result<()> {
             "everysec" => FsyncPolicy::EverySecond,
             _ => FsyncPolicy::No,
         };
-        let aof = Arc::new(
-            AofManager::new(&config.aof.dir, policy)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
-        );
+        let aof =
+            Arc::new(AofManager::new(&config.aof.dir, policy).map_err(std::io::Error::other)?);
         let handle = RuntimeHandle::with_persistence(num_cpus::get(), Some(aof.clone()));
         if let Err(e) = handle.recover().await {
             eprintln!("warning: AOF recovery failed: {e}");
@@ -137,21 +135,25 @@ async fn handle_command(
 
     let command = cmd[0].to_uppercase();
     let response = match command.as_str() {
-        "PING" => runtime
-            .execute(
-                tenant_id.clone(),
-                *tenant_limit_bytes,
-                *tenant_cpu_quota_micros,
-                Command::Ping,
-            )
-            .await,
-        "STATS" => runtime
-            .stats(
-                tenant_id.clone(),
-                *tenant_limit_bytes,
-                *tenant_cpu_quota_micros,
-            )
-            .await,
+        "PING" => {
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Ping,
+                )
+                .await
+        }
+        "STATS" => {
+            runtime
+                .stats(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                )
+                .await
+        }
         "AUTH" => {
             if cmd.len() < 2 {
                 return RespValue::Error("ERR wrong number of arguments for AUTH".to_string());
@@ -240,18 +242,22 @@ async fn handle_command(
                 return RespValue::Error("ERR wrong number of arguments for EXPIRE".to_string());
             }
             match cmd[2].parse::<i64>() {
-                Ok(seconds) => runtime
-                    .execute(
-                        tenant_id.clone(),
-                        *tenant_limit_bytes,
-                        *tenant_cpu_quota_micros,
-                        Command::Expire {
-                            key: cmd[1].clone(),
-                            seconds,
-                        },
-                    )
-                    .await,
-                Err(_) => RespValue::Error("ERR value is not an integer or out of range".to_string()),
+                Ok(seconds) => {
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::Expire {
+                                key: cmd[1].clone(),
+                                seconds,
+                            },
+                        )
+                        .await
+                }
+                Err(_) => {
+                    RespValue::Error("ERR value is not an integer or out of range".to_string())
+                }
             }
         }
         "TTL" => {
@@ -286,7 +292,7 @@ async fn handle_command(
                 .await
         }
         "HSET" => {
-            if cmd.len() < 4 || (cmd.len() - 2) % 2 != 0 {
+            if cmd.len() < 4 || !(cmd.len() - 2).is_multiple_of(2) {
                 return RespValue::Error("ERR wrong number of arguments for HSET".to_string());
             }
             let key = cmd[1].clone();
@@ -339,7 +345,9 @@ async fn handle_command(
             let delta = match cmd[3].parse::<i64>() {
                 Ok(delta) => delta,
                 Err(_) => {
-                    return RespValue::Error("ERR value is not an integer or out of range".to_string())
+                    return RespValue::Error(
+                        "ERR value is not an integer or out of range".to_string(),
+                    );
                 }
             };
             runtime
@@ -436,7 +444,7 @@ async fn handle_command(
                 .await
         }
         "ZADD" => {
-            if cmd.len() < 4 || (cmd.len() - 2) % 2 != 0 {
+            if cmd.len() < 4 || !(cmd.len() - 2).is_multiple_of(2) {
                 return RespValue::Error("ERR wrong number of arguments for ZADD".to_string());
             }
             let key = cmd[1].clone();
@@ -445,7 +453,9 @@ async fn handle_command(
             while idx < cmd.len() {
                 let score = match cmd[idx].parse::<f64>() {
                     Ok(score) => score,
-                    Err(_) => return RespValue::Error("ERR value is not a valid float".to_string()),
+                    Err(_) => {
+                        return RespValue::Error("ERR value is not a valid float".to_string());
+                    }
                 };
                 let member = cmd[idx + 1].clone();
                 let resp = runtime
@@ -500,18 +510,20 @@ async fn handle_command(
                 return RespValue::Error("ERR wrong number of arguments for ZRANGE".to_string());
             }
             match (cmd[2].parse::<i64>(), cmd[3].parse::<i64>()) {
-                (Ok(start), Ok(stop)) => runtime
-                    .execute(
-                        tenant_id.clone(),
-                        *tenant_limit_bytes,
-                        *tenant_cpu_quota_micros,
-                        Command::Zrange {
-                            key: cmd[1].clone(),
-                            start,
-                            stop,
-                        },
-                    )
-                    .await,
+                (Ok(start), Ok(stop)) => {
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::Zrange {
+                                key: cmd[1].clone(),
+                                start,
+                                stop,
+                            },
+                        )
+                        .await
+                }
                 _ => RespValue::Error("ERR value is not an integer or out of range".to_string()),
             }
         }
@@ -704,18 +716,20 @@ async fn handle_command(
                 return RespValue::Error("ERR wrong number of arguments for LRANGE".to_string());
             }
             match (cmd[2].parse::<i64>(), cmd[3].parse::<i64>()) {
-                (Ok(start), Ok(stop)) => runtime
-                    .execute(
-                        tenant_id.clone(),
-                        *tenant_limit_bytes,
-                        *tenant_cpu_quota_micros,
-                        Command::Lrange {
-                            key: cmd[1].clone(),
-                            start,
-                            stop,
-                        },
-                    )
-                    .await,
+                (Ok(start), Ok(stop)) => {
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::Lrange {
+                                key: cmd[1].clone(),
+                                start,
+                                stop,
+                            },
+                        )
+                        .await
+                }
                 _ => RespValue::Error("ERR value is not an integer or out of range".to_string()),
             }
         }
@@ -754,18 +768,22 @@ async fn handle_command(
                 return RespValue::Error("ERR wrong number of arguments for INCRBY".to_string());
             }
             match cmd[2].parse::<i64>() {
-                Ok(delta) => runtime
-                    .execute(
-                        tenant_id.clone(),
-                        *tenant_limit_bytes,
-                        *tenant_cpu_quota_micros,
-                        Command::Incrby {
-                            key: cmd[1].clone(),
-                            delta,
-                        },
-                    )
-                    .await,
-                Err(_) => RespValue::Error("ERR value is not an integer or out of range".to_string()),
+                Ok(delta) => {
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::Incrby {
+                                key: cmd[1].clone(),
+                                delta,
+                            },
+                        )
+                        .await
+                }
+                Err(_) => {
+                    RespValue::Error("ERR value is not an integer or out of range".to_string())
+                }
             }
         }
         "DECRBY" => {
@@ -773,18 +791,22 @@ async fn handle_command(
                 return RespValue::Error("ERR wrong number of arguments for DECRBY".to_string());
             }
             match cmd[2].parse::<i64>() {
-                Ok(delta) => runtime
-                    .execute(
-                        tenant_id.clone(),
-                        *tenant_limit_bytes,
-                        *tenant_cpu_quota_micros,
-                        Command::Decrby {
-                            key: cmd[1].clone(),
-                            delta,
-                        },
-                    )
-                    .await,
-                Err(_) => RespValue::Error("ERR value is not an integer or out of range".to_string()),
+                Ok(delta) => {
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::Decrby {
+                                key: cmd[1].clone(),
+                                delta,
+                            },
+                        )
+                        .await
+                }
+                Err(_) => {
+                    RespValue::Error("ERR value is not an integer or out of range".to_string())
+                }
             }
         }
         "APPEND" => {
@@ -864,7 +886,7 @@ async fn handle_command(
                 .await
         }
         "MSET" => {
-            if cmd.len() < 3 || (cmd.len() - 1) % 2 != 0 {
+            if cmd.len() < 3 || !(cmd.len() - 1).is_multiple_of(2) {
                 return RespValue::Error("ERR wrong number of arguments for MSET".to_string());
             }
             let mut pairs = Vec::with_capacity((cmd.len() - 1) / 2);
@@ -962,18 +984,20 @@ async fn handle_command(
                 return RespValue::Error("ERR wrong number of arguments for ZREVRANGE".to_string());
             }
             match (cmd[2].parse::<i64>(), cmd[3].parse::<i64>()) {
-                (Ok(start), Ok(stop)) => runtime
-                    .execute(
-                        tenant_id.clone(),
-                        *tenant_limit_bytes,
-                        *tenant_cpu_quota_micros,
-                        Command::Zrevrange {
-                            key: cmd[1].clone(),
-                            start,
-                            stop,
-                        },
-                    )
-                    .await,
+                (Ok(start), Ok(stop)) => {
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::Zrevrange {
+                                key: cmd[1].clone(),
+                                start,
+                                stop,
+                            },
+                        )
+                        .await
+                }
                 _ => RespValue::Error("ERR value is not an integer or out of range".to_string()),
             }
         }
@@ -1011,10 +1035,12 @@ async fn handle_command(
     };
 
     // Emit a verifiable audit event to StateLedger for mutating commands.
-    if bridge.enabled() && is_audit_command(&command) && !matches!(response, RespValue::Error(_)) {
-        if let Some(event) = audit_event(&command, cmd, tenant_id) {
-            bridge.emit(event);
-        }
+    if bridge.enabled()
+        && is_audit_command(&command)
+        && !matches!(response, RespValue::Error(_))
+        && let Some(event) = audit_event(&command, cmd, tenant_id)
+    {
+        bridge.emit(event);
     }
 
     response

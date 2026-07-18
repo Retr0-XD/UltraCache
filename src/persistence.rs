@@ -48,7 +48,7 @@ impl AofManager {
     /// Log a command to the AOF for a specific tenant
     pub fn log_command(&self, tenant_id: &str, command: &[String]) -> std::io::Result<()> {
         let mut inner = self.inner.write().unwrap();
-        
+
         // Get or create AOF file for this tenant
         if !inner.files.contains_key(tenant_id) {
             let aof_path = inner.base_dir.join(format!("{}.aof", tenant_id));
@@ -56,8 +56,12 @@ impl AofManager {
                 .create(true)
                 .append(true)
                 .open(aof_path)?;
-            inner.files.insert(tenant_id.to_string(), BufWriter::new(file));
-            inner.last_fsync.insert(tenant_id.to_string(), SystemTime::now());
+            inner
+                .files
+                .insert(tenant_id.to_string(), BufWriter::new(file));
+            inner
+                .last_fsync
+                .insert(tenant_id.to_string(), SystemTime::now());
         }
 
         let fsync_policy = inner.fsync_policy;
@@ -79,12 +83,12 @@ impl AofManager {
             }
             FsyncPolicy::EverySecond => {
                 let now = SystemTime::now();
-                if let Some(last) = last_fsync_time {
-                    if now.duration_since(last).unwrap().as_secs() >= 1 {
-                        writer.flush()?;
-                        writer.get_ref().sync_all()?;
-                        inner.last_fsync.insert(tenant_id.to_string(), now);
-                    }
+                if let Some(last) = last_fsync_time
+                    && now.duration_since(last).unwrap().as_secs() >= 1
+                {
+                    writer.flush()?;
+                    writer.get_ref().sync_all()?;
+                    inner.last_fsync.insert(tenant_id.to_string(), now);
                 }
             }
             FsyncPolicy::No => {
@@ -141,7 +145,11 @@ impl AofManager {
 
     /// Rewrite AOF file to compact it (remove redundant commands)
     #[allow(dead_code)]
-    pub fn rewrite_aof(&self, tenant_id: &str, snapshot_commands: Vec<Vec<String>>) -> std::io::Result<()> {
+    pub fn rewrite_aof(
+        &self,
+        tenant_id: &str,
+        snapshot_commands: Vec<Vec<String>>,
+    ) -> std::io::Result<()> {
         let mut inner = self.inner.write().unwrap();
         let aof_path = inner.base_dir.join(format!("{}.aof", tenant_id));
         let temp_path = inner.base_dir.join(format!("{}.aof.tmp", tenant_id));
@@ -174,7 +182,9 @@ impl AofManager {
             .create(true)
             .append(true)
             .open(aof_path)?;
-        inner.files.insert(tenant_id.to_string(), BufWriter::new(file));
+        inner
+            .files
+            .insert(tenant_id.to_string(), BufWriter::new(file));
 
         Ok(())
     }
@@ -210,10 +220,10 @@ impl AofManager {
         if let Ok(entries) = std::fs::read_dir(&inner.base_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("aof") {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        tenants.push(stem.to_string());
-                    }
+                if path.extension().and_then(|e| e.to_str()) == Some("aof")
+                    && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                {
+                    tenants.push(stem.to_string());
                 }
             }
         }
@@ -251,24 +261,27 @@ mod tests {
 
     #[test]
     fn test_aof_rewrite() {
-        let temp_dir = std::env::temp_dir().join(format!("ultracache_test_{}", std::process::id() + 1));
+        let temp_dir =
+            std::env::temp_dir().join(format!("ultracache_test_{}", std::process::id() + 1));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let aof = AofManager::new(&temp_dir, FsyncPolicy::Always).unwrap();
 
         // Log many redundant commands
         for i in 0..10 {
-            aof.log_command("tenant1", &vec![
-                "SET".to_string(),
-                "counter".to_string(),
-                i.to_string(),
-            ]).unwrap();
+            aof.log_command(
+                "tenant1",
+                &["SET".to_string(), "counter".to_string(), i.to_string()],
+            )
+            .unwrap();
         }
 
         // Rewrite to just the final state
-        let snapshot = vec![
-            vec!["SET".to_string(), "counter".to_string(), "9".to_string()],
-        ];
+        let snapshot = vec![vec![
+            "SET".to_string(),
+            "counter".to_string(),
+            "9".to_string(),
+        ]];
         aof.rewrite_aof("tenant1", snapshot.clone()).unwrap();
 
         let replayed = aof.replay_commands("tenant1").unwrap();

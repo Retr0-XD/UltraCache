@@ -6,7 +6,11 @@ use serde::Deserialize;
 /// Command-line arguments. All fields are optional and fall back to the config
 /// file (then built-in defaults) when omitted.
 #[derive(Parser, Debug)]
-#[command(name = "UltraCache", version, about = "A fast, multi-tenant, Redis-compatible cache")]
+#[command(
+    name = "UltraCache",
+    version,
+    about = "A fast, multi-tenant, Redis-compatible cache"
+)]
 pub struct Cli {
     /// Address to bind the TCP listener to (host:port).
     #[arg(short = 'a', long, env = "ULTRACACHE_ADDR")]

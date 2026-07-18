@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -12,61 +12,179 @@ use crate::resp::RespValue;
 #[derive(Debug, Clone)]
 pub enum Command {
     Ping,
-    Stats,  // Admin command for tenant stats
-    Get { key: String },
-    Set { key: String, value: Vec<u8> },
-    Del { key: String },
-    Expire { key: String, seconds: i64 },
-    Ttl { key: String },
+    Stats, // Admin command for tenant stats
+    Get {
+        key: String,
+    },
+    Set {
+        key: String,
+        value: Vec<u8>,
+    },
+    Del {
+        key: String,
+    },
+    Expire {
+        key: String,
+        seconds: i64,
+    },
+    Ttl {
+        key: String,
+    },
     // Hash commands
-    Hget { key: String, field: String },
-    Hset { key: String, field: String, value: Vec<u8> },
-    Hdel { key: String, field: String },
-    Hincrby { key: String, field: String, delta: i64 },
-    Hgetall { key: String },
-    Hkeys { key: String },
-    Hvals { key: String },
+    Hget {
+        key: String,
+        field: String,
+    },
+    Hset {
+        key: String,
+        field: String,
+        value: Vec<u8>,
+    },
+    Hdel {
+        key: String,
+        field: String,
+    },
+    Hincrby {
+        key: String,
+        field: String,
+        delta: i64,
+    },
+    Hgetall {
+        key: String,
+    },
+    Hkeys {
+        key: String,
+    },
+    Hvals {
+        key: String,
+    },
     // Set commands
-    Sadd { key: String, member: String },
-    Srem { key: String, member: String },
-    Smembers { key: String },
-    Scard { key: String },
-    Sismember { key: String, member: String },
+    Sadd {
+        key: String,
+        member: String,
+    },
+    Srem {
+        key: String,
+        member: String,
+    },
+    Smembers {
+        key: String,
+    },
+    Scard {
+        key: String,
+    },
+    Sismember {
+        key: String,
+        member: String,
+    },
     // Sorted Set commands
-    Zadd { key: String, score: f64, member: String },
-    Zrem { key: String, member: String },
-    Zrange { key: String, start: i64, stop: i64 },
-    Zcard { key: String },
-    Zscore { key: String, member: String },
+    Zadd {
+        key: String,
+        score: f64,
+        member: String,
+    },
+    Zrem {
+        key: String,
+        member: String,
+    },
+    Zrange {
+        key: String,
+        start: i64,
+        stop: i64,
+    },
+    Zcard {
+        key: String,
+    },
+    Zscore {
+        key: String,
+        member: String,
+    },
     // List commands
-    Lpush { key: String, value: Vec<u8> },
-    Rpush { key: String, value: Vec<u8> },
-    Lpop { key: String },
-    Rpop { key: String },
-    Llen { key: String },
-    Lrange { key: String, start: i64, stop: i64 },
+    Lpush {
+        key: String,
+        value: Vec<u8>,
+    },
+    Rpush {
+        key: String,
+        value: Vec<u8>,
+    },
+    Lpop {
+        key: String,
+    },
+    Rpop {
+        key: String,
+    },
+    Llen {
+        key: String,
+    },
+    Lrange {
+        key: String,
+        start: i64,
+        stop: i64,
+    },
     // String extensions
-    Incr { key: String },
-    Decr { key: String },
-    Incrby { key: String, delta: i64 },
-    Decrby { key: String, delta: i64 },
-    Append { key: String, value: Vec<u8> },
-    Exists { key: String },
-    Type { key: String },
-    Persist { key: String },
-    Pttl { key: String },
+    Incr {
+        key: String,
+    },
+    Decr {
+        key: String,
+    },
+    Incrby {
+        key: String,
+        delta: i64,
+    },
+    Decrby {
+        key: String,
+        delta: i64,
+    },
+    Append {
+        key: String,
+        value: Vec<u8>,
+    },
+    Exists {
+        key: String,
+    },
+    Type {
+        key: String,
+    },
+    Persist {
+        key: String,
+    },
+    Pttl {
+        key: String,
+    },
     // Bulk / multi-key commands
-    Mset { pairs: Vec<(String, Vec<u8>)> },
-    Mget { keys: Vec<String> },
-    Keys { pattern: String },
+    Mset {
+        pairs: Vec<(String, Vec<u8>)>,
+    },
+    Mget {
+        keys: Vec<String>,
+    },
+    Keys {
+        pattern: String,
+    },
     Flushdb,
-    Rename { from: String, to: String },
+    Rename {
+        from: String,
+        to: String,
+    },
     // Sorted set extensions
-    Zrank { key: String, member: String },
-    Zrevrange { key: String, start: i64, stop: i64 },
+    Zrank {
+        key: String,
+        member: String,
+    },
+    Zrevrange {
+        key: String,
+        start: i64,
+        stop: i64,
+    },
     // Set extensions
-    Sunion { keys: Vec<String> },
-    Sdiff { keys: Vec<String> },
+    Sunion {
+        keys: Vec<String>,
+    },
+    Sdiff {
+        keys: Vec<String>,
+    },
 }
 
 #[derive(Debug)]
@@ -113,7 +231,10 @@ impl ShardRuntime {
             });
         }
 
-        Self { shards, persistence }
+        Self {
+            shards,
+            persistence,
+        }
     }
 
     /// Replay persisted AOF commands for every known tenant into the shards.
@@ -162,13 +283,8 @@ impl ShardRuntime {
                 }
                 let command = parse_args_to_command(&cmd)
                     .ok_or_else(|| "failed to parse aof command".to_string())?;
-                self.execute(
-                    tenant_id.clone(),
-                    64 * 1024 * 1024,
-                    5_000,
-                    command,
-                )
-                .await;
+                self.execute(tenant_id.clone(), 64 * 1024 * 1024, 5_000, command)
+                    .await;
             }
         }
         Ok(())
@@ -192,7 +308,7 @@ impl ShardRuntime {
                 respond_to: resp_tx,
             };
 
-            if let Err(_) = tx.send(req).await {
+            if tx.send(req).await.is_err() {
                 return RespValue::Error("ERR shard unavailable".to_string());
             }
             receivers.push(resp_rx);
@@ -233,7 +349,7 @@ impl ShardRuntime {
             respond_to: tx,
         };
 
-        if let Err(_) = self.shards[shard_idx].send(req).await {
+        if self.shards[shard_idx].send(req).await.is_err() {
             return RespValue::Error("ERR shard unavailable".to_string());
         }
 
@@ -271,9 +387,7 @@ impl ShardRuntime {
                     let set: HashSet<String> = values
                         .into_iter()
                         .filter_map(|value| match value {
-                            RespValue::BulkString(Some(bytes)) => {
-                                String::from_utf8(bytes).ok()
-                            }
+                            RespValue::BulkString(Some(bytes)) => String::from_utf8(bytes).ok(),
                             _ => None,
                         })
                         .collect();
@@ -288,7 +402,7 @@ impl ShardRuntime {
                         ),
                     };
 
-                    if intersection.as_ref().map_or(true, |s| s.is_empty()) {
+                    if intersection.as_ref().is_none_or(|s| s.is_empty()) {
                         return RespValue::Array(vec![]);
                     }
                 }
@@ -346,17 +460,13 @@ impl ShardRuntime {
             | Command::Type { key }
             | Command::Persist { key }
             | Command::Pttl { key }
-            | Command::Rename { from: key, .. } => {
-                key.hash(&mut hasher)
-            }
+            | Command::Rename { from: key, .. } => key.hash(&mut hasher),
             Command::Mset { pairs } => {
                 for (k, _) in pairs {
                     k.hash(&mut hasher);
                 }
             }
-            Command::Mget { keys }
-            | Command::Sunion { keys }
-            | Command::Sdiff { keys } => {
+            Command::Mget { keys } | Command::Sunion { keys } | Command::Sdiff { keys } => {
                 for k in keys {
                     k.hash(&mut hasher);
                 }
@@ -364,8 +474,7 @@ impl ShardRuntime {
             Command::Keys { pattern: key } => {
                 key.hash(&mut hasher);
             }
-            Command::Zrank { key, .. }
-            | Command::Zrevrange { key, .. } => {
+            Command::Zrank { key, .. } | Command::Zrevrange { key, .. } => {
                 key.hash(&mut hasher);
             }
             Command::Flushdb | Command::Ping | Command::Stats => {}
@@ -396,12 +505,12 @@ fn handle_command(
 
     // Reset CPU budget if 1 second has elapsed
     state.check_and_reset_cpu_budget();
-    
+
     // Check if tenant is throttled
     if state.is_throttled() {
         return RespValue::Error("ERR tenant CPU quota exceeded".to_string());
     }
-    
+
     let start = std::time::Instant::now();
     let result = match command {
         Command::Ping => RespValue::SimpleString("PONG".to_string()),
@@ -438,7 +547,7 @@ fn handle_command(
             RespValue::BulkString(Some(stats.into_bytes()))
         }
         Command::Get { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -447,7 +556,10 @@ fn handle_command(
                     } else {
                         match &entry.data {
                             EntryData::String(bytes) => RespValue::BulkString(Some(bytes.clone())),
-                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                            _ => RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            ),
                         }
                     }
                 }
@@ -455,8 +567,8 @@ fn handle_command(
             }
         }
         Command::Set { ref key, ref value } => {
-            let k = tenant_key(&tenant_id, &key);
-            let entry_size = entry_size_bytes(&k, &value);
+            let k = tenant_key(&tenant_id, key);
+            let entry_size = entry_size_bytes(&k, value);
             if entry_size > state.limit_bytes {
                 return RespValue::Error("ERR tenant memory limit exceeded".to_string());
             }
@@ -486,7 +598,7 @@ fn handle_command(
             RespValue::SimpleString("OK".to_string())
         }
         Command::Del { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             let removed = state.remove(&k);
             if removed.is_some() {
                 RespValue::Integer(1)
@@ -495,7 +607,7 @@ fn handle_command(
             }
         }
         Command::Expire { ref key, seconds } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
                     state.remove(&k);
@@ -512,7 +624,7 @@ fn handle_command(
             }
         }
         Command::Ttl { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get(&k) {
                 if TenantState::is_expired(entry) {
                     state.remove(&k);
@@ -531,7 +643,7 @@ fn handle_command(
         }
         // Hash commands
         Command::Hget { ref key, ref field } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -539,20 +651,25 @@ fn handle_command(
                         return RespValue::BulkString(None);
                     }
                     match &entry.data {
-                        EntryData::Hash(map) => {
-                            match map.get(field) {
-                                Some(val) => RespValue::BulkString(Some(val.clone())),
-                                None => RespValue::BulkString(None),
-                            }
-                        }
-                        _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        EntryData::Hash(map) => match map.get(field) {
+                            Some(val) => RespValue::BulkString(Some(val.clone())),
+                            None => RespValue::BulkString(None),
+                        },
+                        _ => RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        ),
                     }
                 }
                 None => RespValue::BulkString(None),
             }
         }
-        Command::Hset { ref key, ref field, ref value } => {
-            let k = tenant_key(&tenant_id, &key);
+        Command::Hset {
+            ref key,
+            ref field,
+            ref value,
+        } => {
+            let k = tenant_key(&tenant_id, key);
 
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
@@ -564,7 +681,12 @@ fn handle_command(
                             reconcile_entry_size(state, &k);
                             return RespValue::Integer(if is_new_field { 1 } else { 0 });
                         }
-                        _ => return RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        _ => {
+                            return RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            );
+                        }
                     }
                 }
             }
@@ -583,7 +705,7 @@ fn handle_command(
             RespValue::Integer(1)
         }
         Command::Hdel { ref key, ref field } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
                     state.remove(&k);
@@ -595,14 +717,21 @@ fn handle_command(
                         reconcile_entry_size(state, &k);
                         RespValue::Integer(if removed { 1 } else { 0 })
                     }
-                    _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                    _ => RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    ),
                 }
             } else {
                 RespValue::Integer(0)
             }
         }
-        Command::Hincrby { ref key, ref field, delta } => {
-            let k = tenant_key(&tenant_id, &key);
+        Command::Hincrby {
+            ref key,
+            ref field,
+            delta,
+        } => {
+            let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
                     state.remove(&k);
@@ -618,7 +747,7 @@ fn handle_command(
                                     None => {
                                         return RespValue::Error(
                                             "ERR hash value is not an integer".to_string(),
-                                        )
+                                        );
                                     }
                                 },
                                 None => 0,
@@ -632,7 +761,7 @@ fn handle_command(
                             return RespValue::Error(
                                 "WRONGTYPE Operation against a key holding the wrong kind of value"
                                     .to_string(),
-                            )
+                            );
                         }
                     }
                 }
@@ -652,8 +781,11 @@ fn handle_command(
             RespValue::Integer(next)
         }
         // Set commands
-        Command::Sadd { ref key, ref member } => {
-            let k = tenant_key(&tenant_id, &key);
+        Command::Sadd {
+            ref key,
+            ref member,
+        } => {
+            let k = tenant_key(&tenant_id, key);
 
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
@@ -665,7 +797,12 @@ fn handle_command(
                             reconcile_entry_size(state, &k);
                             return RespValue::Integer(if added { 1 } else { 0 });
                         }
-                        _ => return RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        _ => {
+                            return RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            );
+                        }
                     }
                 }
             }
@@ -683,8 +820,11 @@ fn handle_command(
             state.cache.put(k, entry);
             RespValue::Integer(1)
         }
-        Command::Srem { ref key, ref member } => {
-            let k = tenant_key(&tenant_id, &key);
+        Command::Srem {
+            ref key,
+            ref member,
+        } => {
+            let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
                     state.remove(&k);
@@ -696,14 +836,17 @@ fn handle_command(
                         reconcile_entry_size(state, &k);
                         RespValue::Integer(if removed { 1 } else { 0 })
                     }
-                    _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                    _ => RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    ),
                 }
             } else {
                 RespValue::Integer(0)
             }
         }
         Command::Smembers { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -712,20 +855,28 @@ fn handle_command(
                     }
                     match &entry.data {
                         EntryData::Set(set) => {
-                            let members: Vec<RespValue> = set.iter()
+                            let members: Vec<RespValue> = set
+                                .iter()
                                 .map(|m| RespValue::BulkString(Some(m.as_bytes().to_vec())))
                                 .collect();
                             RespValue::Array(members)
                         }
-                        _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        _ => RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        ),
                     }
                 }
                 None => RespValue::Array(vec![]),
             }
         }
         // Sorted Set commands
-        Command::Zadd { ref key, score, ref member } => {
-            let k = tenant_key(&tenant_id, &key);
+        Command::Zadd {
+            ref key,
+            score,
+            ref member,
+        } => {
+            let k = tenant_key(&tenant_id, key);
 
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
@@ -737,7 +888,12 @@ fn handle_command(
                             reconcile_entry_size(state, &k);
                             return RespValue::Integer(if is_new { 1 } else { 0 });
                         }
-                        _ => return RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        _ => {
+                            return RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            );
+                        }
                     }
                 }
             }
@@ -755,8 +911,11 @@ fn handle_command(
             state.cache.put(k, entry);
             RespValue::Integer(1)
         }
-        Command::Zrem { ref key, ref member } => {
-            let k = tenant_key(&tenant_id, &key);
+        Command::Zrem {
+            ref key,
+            ref member,
+        } => {
+            let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
                     state.remove(&k);
@@ -768,14 +927,21 @@ fn handle_command(
                         reconcile_entry_size(state, &k);
                         RespValue::Integer(if removed { 1 } else { 0 })
                     }
-                    _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                    _ => RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    ),
                 }
             } else {
                 RespValue::Integer(0)
             }
         }
-        Command::Zrange { ref key, start, stop } => {
-            let k = tenant_key(&tenant_id, &key);
+        Command::Zrange {
+            ref key,
+            start,
+            stop,
+        } => {
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -786,26 +952,40 @@ fn handle_command(
                         EntryData::ZSet(zset) => {
                             // Collect and sort by score
                             let mut members: Vec<(&String, &f64)> = zset.iter().collect();
-                            members.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
-                            
+                            members.sort_by(|a, b| {
+                                a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal)
+                            });
+
                             let len = members.len() as i64;
-                            let start_idx = if start < 0 { (len + start).max(0) } else { start.min(len) } as usize;
-                            let stop_idx = if stop < 0 { (len + stop + 1).max(0) } else { (stop + 1).min(len) } as usize;
-                            
-                            let result: Vec<RespValue> = members[start_idx..stop_idx.min(members.len())]
+                            let start_idx = if start < 0 {
+                                (len + start).max(0)
+                            } else {
+                                start.min(len)
+                            } as usize;
+                            let stop_idx = if stop < 0 {
+                                (len + stop + 1).max(0)
+                            } else {
+                                (stop + 1).min(len)
+                            } as usize;
+
+                            let result: Vec<RespValue> = members
+                                [start_idx..stop_idx.min(members.len())]
                                 .iter()
                                 .map(|(m, _)| RespValue::BulkString(Some(m.as_bytes().to_vec())))
                                 .collect();
                             RespValue::Array(result)
                         }
-                        _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        _ => RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        ),
                     }
                 }
                 None => RespValue::Array(vec![]),
             }
         }
         Command::Zcard { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -814,15 +994,21 @@ fn handle_command(
                     } else {
                         match &entry.data {
                             EntryData::ZSet(zset) => RespValue::Integer(zset.len() as i64),
-                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                            _ => RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            ),
                         }
                     }
                 }
                 None => RespValue::Integer(0),
             }
         }
-        Command::Zscore { ref key, ref member } => {
-            let k = tenant_key(&tenant_id, &key);
+        Command::Zscore {
+            ref key,
+            ref member,
+        } => {
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -837,7 +1023,10 @@ fn handle_command(
                                     RespValue::BulkString(None)
                                 }
                             }
-                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                            _ => RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            ),
                         }
                     }
                 }
@@ -846,7 +1035,7 @@ fn handle_command(
         }
         // Hash extensions
         Command::Hgetall { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -857,12 +1046,17 @@ fn handle_command(
                             EntryData::Hash(hash) => {
                                 let mut result = Vec::new();
                                 for (field, value) in hash {
-                                    result.push(RespValue::BulkString(Some(field.as_bytes().to_vec())));
+                                    result.push(RespValue::BulkString(Some(
+                                        field.as_bytes().to_vec(),
+                                    )));
                                     result.push(RespValue::BulkString(Some(value.clone())));
                                 }
                                 RespValue::Array(result)
                             }
-                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                            _ => RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            ),
                         }
                     }
                 }
@@ -870,7 +1064,7 @@ fn handle_command(
             }
         }
         Command::Hkeys { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -879,12 +1073,16 @@ fn handle_command(
                     } else {
                         match &entry.data {
                             EntryData::Hash(hash) => {
-                                let keys: Vec<RespValue> = hash.keys()
+                                let keys: Vec<RespValue> = hash
+                                    .keys()
                                     .map(|k| RespValue::BulkString(Some(k.as_bytes().to_vec())))
                                     .collect();
                                 RespValue::Array(keys)
                             }
-                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                            _ => RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            ),
                         }
                     }
                 }
@@ -892,7 +1090,7 @@ fn handle_command(
             }
         }
         Command::Hvals { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -901,12 +1099,16 @@ fn handle_command(
                     } else {
                         match &entry.data {
                             EntryData::Hash(hash) => {
-                                let values: Vec<RespValue> = hash.values()
+                                let values: Vec<RespValue> = hash
+                                    .values()
                                     .map(|v| RespValue::BulkString(Some(v.clone())))
                                     .collect();
                                 RespValue::Array(values)
                             }
-                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                            _ => RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            ),
                         }
                     }
                 }
@@ -915,7 +1117,7 @@ fn handle_command(
         }
         // Set extensions
         Command::Scard { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -924,15 +1126,21 @@ fn handle_command(
                     } else {
                         match &entry.data {
                             EntryData::Set(set) => RespValue::Integer(set.len() as i64),
-                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                            _ => RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            ),
                         }
                     }
                 }
                 None => RespValue::Integer(0),
             }
         }
-        Command::Sismember { ref key, ref member } => {
-            let k = tenant_key(&tenant_id, &key);
+        Command::Sismember {
+            ref key,
+            ref member,
+        } => {
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -940,8 +1148,13 @@ fn handle_command(
                         RespValue::Integer(0)
                     } else {
                         match &entry.data {
-                            EntryData::Set(set) => RespValue::Integer(if set.contains(member) { 1 } else { 0 }),
-                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                            EntryData::Set(set) => {
+                                RespValue::Integer(if set.contains(member) { 1 } else { 0 })
+                            }
+                            _ => RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            ),
                         }
                     }
                 }
@@ -950,7 +1163,7 @@ fn handle_command(
         }
         // List commands
         Command::Lpush { ref key, ref value } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
 
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
@@ -962,14 +1175,18 @@ fn handle_command(
                     state.used_bytes = state.used_bytes.saturating_add(added);
                     return RespValue::Integer(list.len() as i64);
                 } else {
-                    return RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
+                    return RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    );
                 }
             }
 
             // Create new list
             let mut list = VecDeque::new();
             list.push_front(value.clone());
-            let entry_size = calculate_entry_size(&k, &EntryData::List(list.iter().cloned().collect()));
+            let entry_size =
+                calculate_entry_size(&k, &EntryData::List(list.iter().cloned().collect()));
             if entry_size > state.limit_bytes {
                 return RespValue::Error("ERR tenant memory limit exceeded".to_string());
             }
@@ -984,7 +1201,7 @@ fn handle_command(
             RespValue::Integer(1)
         }
         Command::Rpush { ref key, ref value } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
 
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
@@ -996,14 +1213,18 @@ fn handle_command(
                     state.used_bytes = state.used_bytes.saturating_add(added);
                     return RespValue::Integer(list.len() as i64);
                 } else {
-                    return RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
+                    return RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    );
                 }
             }
 
             // Create new list
             let mut list = VecDeque::new();
             list.push_back(value.clone());
-            let entry_size = calculate_entry_size(&k, &EntryData::List(list.iter().cloned().collect()));
+            let entry_size =
+                calculate_entry_size(&k, &EntryData::List(list.iter().cloned().collect()));
             if entry_size > state.limit_bytes {
                 return RespValue::Error("ERR tenant memory limit exceeded".to_string());
             }
@@ -1018,7 +1239,7 @@ fn handle_command(
             RespValue::Integer(1)
         }
         Command::Lpop { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
                     state.remove(&k);
@@ -1032,14 +1253,17 @@ fn handle_command(
                             RespValue::BulkString(None)
                         }
                     }
-                    _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                    _ => RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    ),
                 }
             } else {
                 RespValue::BulkString(None)
             }
         }
         Command::Rpop { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
                     state.remove(&k);
@@ -1053,14 +1277,17 @@ fn handle_command(
                             RespValue::BulkString(None)
                         }
                     }
-                    _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                    _ => RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    ),
                 }
             } else {
                 RespValue::BulkString(None)
             }
         }
         Command::Llen { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -1069,15 +1296,22 @@ fn handle_command(
                     } else {
                         match &entry.data {
                             EntryData::List(list) => RespValue::Integer(list.len() as i64),
-                            _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                            _ => RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            ),
                         }
                     }
                 }
                 None => RespValue::Integer(0),
             }
         }
-        Command::Lrange { ref key, start, stop } => {
-            let k = tenant_key(&tenant_id, &key);
+        Command::Lrange {
+            ref key,
+            start,
+            stop,
+        } => {
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -1087,31 +1321,41 @@ fn handle_command(
                     match &entry.data {
                         EntryData::List(list) => {
                             let len = list.len() as i64;
-                            let start_idx = if start < 0 { (len + start).max(0) } else { start.min(len) } as usize;
-                            let stop_idx = if stop < 0 { (len + stop + 1).max(0) } else { (stop + 1).min(len) } as usize;
-                            
-                            let result: Vec<RespValue> = list.iter()
+                            let start_idx = if start < 0 {
+                                (len + start).max(0)
+                            } else {
+                                start.min(len)
+                            } as usize;
+                            let stop_idx = if stop < 0 {
+                                (len + stop + 1).max(0)
+                            } else {
+                                (stop + 1).min(len)
+                            } as usize;
+
+                            let result: Vec<RespValue> = list
+                                .iter()
                                 .skip(start_idx)
                                 .take(stop_idx.saturating_sub(start_idx))
                                 .map(|v| RespValue::BulkString(Some(v.clone())))
                                 .collect();
                             RespValue::Array(result)
                         }
-                        _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        _ => RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        ),
                     }
                 }
                 None => RespValue::Array(vec![]),
             }
         }
         // String extensions
-        Command::Incr { ref key } => {
-            incr_decr(state, &tenant_id, key, 1)
-        }
+        Command::Incr { ref key } => incr_decr(state, &tenant_id, key, 1),
         Command::Decr { ref key } => incr_decr(state, &tenant_id, key, -1),
         Command::Incrby { ref key, delta } => incr_decr(state, &tenant_id, key, delta),
         Command::Decrby { ref key, delta } => incr_decr(state, &tenant_id, key, -delta),
         Command::Append { ref key, ref value } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
                     state.remove(&k);
@@ -1122,7 +1366,10 @@ fn handle_command(
                     state.used_bytes = state.used_bytes.saturating_add(added);
                     return RespValue::Integer(bytes.len() as i64);
                 } else {
-                    return RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
+                    return RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    );
                 }
             }
             // Key did not exist: create it.
@@ -1140,7 +1387,7 @@ fn handle_command(
             RespValue::Integer(value.len() as i64)
         }
         Command::Exists { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -1154,7 +1401,7 @@ fn handle_command(
             }
         }
         Command::Type { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -1175,7 +1422,7 @@ fn handle_command(
             }
         }
         Command::Persist { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get_mut(&k) {
                 if TenantState::is_expired(entry) {
                     state.remove(&k);
@@ -1192,7 +1439,7 @@ fn handle_command(
             }
         }
         Command::Pttl { ref key } => {
-            let k = tenant_key(&tenant_id, &key);
+            let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get(&k) {
                 if TenantState::is_expired(entry) {
                     state.remove(&k);
@@ -1306,8 +1553,11 @@ fn handle_command(
             }
         }
         // Sorted set extensions
-        Command::Zrank { ref key, ref member } => {
-            let k = tenant_key(&tenant_id, &key);
+        Command::Zrank {
+            ref key,
+            ref member,
+        } => {
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -1317,7 +1567,9 @@ fn handle_command(
                     match &entry.data {
                         EntryData::ZSet(zset) => {
                             let mut members: Vec<(&String, &f64)> = zset.iter().collect();
-                            members.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
+                            members.sort_by(|a, b| {
+                                a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal)
+                            });
                             for (idx, (m, _)) in members.iter().enumerate() {
                                 if *m == member {
                                     return RespValue::Integer(idx as i64);
@@ -1325,14 +1577,21 @@ fn handle_command(
                             }
                             RespValue::BulkString(None)
                         }
-                        _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        _ => RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        ),
                     }
                 }
                 None => RespValue::BulkString(None),
             }
         }
-        Command::Zrevrange { ref key, start, stop } => {
-            let k = tenant_key(&tenant_id, &key);
+        Command::Zrevrange {
+            ref key,
+            start,
+            stop,
+        } => {
+            let k = tenant_key(&tenant_id, key);
             match state.cache.get(&k) {
                 Some(entry) => {
                     if TenantState::is_expired(entry) {
@@ -1342,17 +1601,31 @@ fn handle_command(
                     match &entry.data {
                         EntryData::ZSet(zset) => {
                             let mut members: Vec<(&String, &f64)> = zset.iter().collect();
-                            members.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+                            members.sort_by(|a, b| {
+                                b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal)
+                            });
                             let len = members.len() as i64;
-                            let start_idx = if start < 0 { (len + start).max(0) } else { start.min(len) } as usize;
-                            let stop_idx = if stop < 0 { (len + stop + 1).max(0) } else { (stop + 1).min(len) } as usize;
-                            let result: Vec<RespValue> = members[start_idx..stop_idx.min(members.len())]
+                            let start_idx = if start < 0 {
+                                (len + start).max(0)
+                            } else {
+                                start.min(len)
+                            } as usize;
+                            let stop_idx = if stop < 0 {
+                                (len + stop + 1).max(0)
+                            } else {
+                                (stop + 1).min(len)
+                            } as usize;
+                            let result: Vec<RespValue> = members
+                                [start_idx..stop_idx.min(members.len())]
                                 .iter()
                                 .map(|(m, _)| RespValue::BulkString(Some(m.as_bytes().to_vec())))
                                 .collect();
                             RespValue::Array(result)
                         }
-                        _ => RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                        _ => RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        ),
                     }
                 }
                 None => RespValue::Array(vec![]),
@@ -1396,7 +1669,10 @@ fn handle_command(
                     } else if let EntryData::Set(set) = &entry.data {
                         set.clone()
                     } else {
-                        return RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
+                        return RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        );
                     }
                 }
                 None => HashSet::new(),
@@ -1429,12 +1705,12 @@ fn handle_command(
     // Persist mutating commands to the AOF for crash recovery. We only log
     // commands that actually changed state (no error responses) so a replay
     // reproduces the exact final state.
-    if let Some(aof) = persistence {
-        if is_mutating_command(&command) && !matches!(result, RespValue::Error(_)) {
-            if let Some(args) = command_to_args(&command) {
-                let _ = aof.log_command(&tenant_id, &args);
-            }
-        }
+    if let Some(aof) = persistence
+        && is_mutating_command(&command)
+        && !matches!(result, RespValue::Error(_))
+        && let Some(args) = command_to_args(&command)
+    {
+        let _ = aof.log_command(&tenant_id, &args);
     }
 
     // Record CPU time and latency
@@ -1493,9 +1769,7 @@ fn command_to_args(cmd: &Command) -> Option<Vec<String>> {
             field.clone(),
             String::from_utf8_lossy(value).into_owned(),
         ]),
-        Command::Hdel { key, field } => {
-            Some(vec!["HDEL".to_string(), key.clone(), field.clone()])
-        }
+        Command::Hdel { key, field } => Some(vec!["HDEL".to_string(), key.clone(), field.clone()]),
         Command::Hincrby { key, field, delta } => Some(vec![
             "HINCRBY".to_string(),
             key.clone(),
@@ -1552,9 +1826,7 @@ fn command_to_args(cmd: &Command) -> Option<Vec<String>> {
             Some(args)
         }
         Command::Flushdb => Some(vec!["FLUSHDB".to_string()]),
-        Command::Rename { from, to } => {
-            Some(vec!["RENAME".to_string(), from.clone(), to.clone()])
-        }
+        Command::Rename { from, to } => Some(vec!["RENAME".to_string(), from.clone(), to.clone()]),
         _ => None,
     }
 }
@@ -1835,7 +2107,7 @@ struct TenantState {
     cpu_quota_micros: u64,
     last_reset: std::time::Instant,
     // Latency tracking (simple histogram)
-    latency_samples: Vec<u64>,  // Store last N latencies in microseconds
+    latency_samples: Vec<u64>, // Store last N latencies in microseconds
     total_commands: u64,
     eviction_count: u64,
 }
@@ -1855,7 +2127,7 @@ impl TenantState {
             eviction_count: 0,
         }
     }
-    
+
     fn check_and_reset_cpu_budget(&mut self) {
         let elapsed = self.last_reset.elapsed();
         if elapsed.as_secs() >= 1 {
@@ -1863,15 +2135,15 @@ impl TenantState {
             self.last_reset = std::time::Instant::now();
         }
     }
-    
+
     fn is_throttled(&self) -> bool {
         self.cpu_used_micros >= self.cpu_quota_micros
     }
-    
+
     fn record_cpu_time(&mut self, micros: u64) {
         self.cpu_used_micros = self.cpu_used_micros.saturating_add(micros);
     }
-    
+
     fn record_latency(&mut self, micros: u64) {
         self.total_commands += 1;
         // Keep last 1000 samples for p99 calculation
@@ -1880,7 +2152,7 @@ impl TenantState {
         }
         self.latency_samples.push(micros);
     }
-    
+
     fn calculate_p99(&self) -> u64 {
         if self.latency_samples.is_empty() {
             return 0;
@@ -1890,7 +2162,7 @@ impl TenantState {
         let idx = (sorted.len() as f64 * 0.99).ceil() as usize - 1;
         sorted[idx.min(sorted.len() - 1)]
     }
-    
+
     fn record_eviction(&mut self) {
         self.eviction_count += 1;
     }
@@ -1928,22 +2200,16 @@ fn calculate_entry_size(key: &str, data: &EntryData) -> u64 {
     let key_size = key.len() as u64;
     let data_size = match data {
         EntryData::String(bytes) => bytes.len() as u64,
-        EntryData::Hash(map) => {
-            map.iter()
-                .map(|(k, v)| (k.len() + v.len()) as u64)
-                .sum::<u64>()
-        }
-        EntryData::Set(set) => {
-            set.iter().map(|s| s.len() as u64).sum::<u64>()
-        }
-        EntryData::ZSet(map) => {
-            map.iter()
-                .map(|(member, _score)| member.len() as u64 + 8)
-                .sum::<u64>()
-        }
-        EntryData::List(list) => {
-            list.iter().map(|v| v.len() as u64).sum::<u64>()
-        }
+        EntryData::Hash(map) => map
+            .iter()
+            .map(|(k, v)| (k.len() + v.len()) as u64)
+            .sum::<u64>(),
+        EntryData::Set(set) => set.iter().map(|s| s.len() as u64).sum::<u64>(),
+        EntryData::ZSet(map) => map
+            .keys()
+            .map(|member| member.len() as u64 + 8)
+            .sum::<u64>(),
+        EntryData::List(list) => list.iter().map(|v| v.len() as u64).sum::<u64>(),
     };
     key_size + data_size
 }
@@ -1957,12 +2223,7 @@ fn current_timestamp() -> u64 {
 
 /// Increment or decrement a string-valued key interpreted as an integer.
 /// Used by INCR/DECR/INCRBY/DECRBY. Creates the key at 0 if it does not exist.
-fn incr_decr(
-    state: &mut TenantState,
-    tenant_id: &str,
-    key: &str,
-    delta: i64,
-) -> RespValue {
+fn incr_decr(state: &mut TenantState, tenant_id: &str, key: &str, delta: i64) -> RespValue {
     let k = tenant_key(tenant_id, key);
     if let Some(entry) = state.cache.get_mut(&k) {
         if TenantState::is_expired(entry) {
@@ -1990,7 +2251,9 @@ fn incr_decr(
             }
             return RespValue::Integer(next);
         } else {
-            return RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
+            return RespValue::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            );
         }
     }
 
@@ -2066,7 +2329,14 @@ mod tests {
     /// Build a single-tenant store and run a command directly through
     /// `handle_command` (no sharding) for deterministic unit testing.
     fn run(store: &mut HashMap<String, TenantState>, tenant: &str, cmd: Command) -> RespValue {
-        handle_command(store, tenant.to_string(), 64 * 1024 * 1024, 5_000, cmd, None)
+        handle_command(
+            store,
+            tenant.to_string(),
+            64 * 1024 * 1024,
+            5_000,
+            cmd,
+            None,
+        )
     }
 
     #[test]
@@ -2092,7 +2362,10 @@ mod tests {
         assert_eq!(resp, RespValue::BulkString(Some(b"hello".to_vec())));
 
         let state = store.get(tenant).unwrap();
-        assert!(state.used_bytes >= 6, "used_bytes should account for key+value");
+        assert!(
+            state.used_bytes >= 6,
+            "used_bytes should account for key+value"
+        );
         assert_eq!(state.cache.len(), 1);
     }
 
