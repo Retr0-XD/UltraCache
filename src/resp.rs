@@ -1,6 +1,6 @@
 use std::str;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum RespValue {
     SimpleString(String),
     Error(String),

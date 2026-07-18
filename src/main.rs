@@ -2,35 +2,68 @@ mod resp;
 mod runtime;
 mod tenant;
 mod persistence;
+mod config;
+mod bridge;
 
 use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+use crate::config::Config;
+use crate::persistence::{AofManager, FsyncPolicy};
 use crate::resp::{parse_command, RespValue};
 use crate::runtime::{Command, RuntimeHandle};
 use crate::tenant::TenantRegistry;
 
-const DEFAULT_ADDR: &str = "0.0.0.0:6379";
-
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    let config = Config::load();
+
     let registry = Arc::new(TenantRegistry::new());
-    let runtime = RuntimeHandle::new(num_cpus::get());
+    let runtime = if config.aof.enabled {
+        let policy = match config.aof.fsync_policy.as_str() {
+            "always" => FsyncPolicy::Always,
+            "everysec" => FsyncPolicy::EverySecond,
+            _ => FsyncPolicy::No,
+        };
+        let aof = Arc::new(
+            AofManager::new(&config.aof.dir, policy)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
+        );
+        let handle = RuntimeHandle::with_persistence(num_cpus::get(), Some(aof.clone()));
+        if let Err(e) = handle.recover().await {
+            eprintln!("warning: AOF recovery failed: {e}");
+        } else {
+            println!("AOF recovery complete");
+        }
+        handle
+    } else {
+        RuntimeHandle::new(num_cpus::get())
+    };
 
     let _ = registry.resolve_or_create("default");
 
-    let listener = TcpListener::bind(DEFAULT_ADDR).await?;
-    println!("UltraCache listening on {DEFAULT_ADDR}");
+    // Optional verifiable audit bridge to StateLedger.
+    let bridge = match bridge::BridgeConfig::from_endpoint(&config.ledger_endpoint) {
+        Some(cfg) => {
+            println!("StateLedger audit bridge enabled: {}", cfg.endpoint);
+            bridge::LedgerBridge::new(cfg)
+        }
+        None => bridge::LedgerBridge::none(),
+    };
+
+    let listener = TcpListener::bind(&config.addr).await?;
+    println!("UltraCache listening on {}", config.addr);
 
     loop {
         let (stream, _) = listener.accept().await?;
         let registry = Arc::clone(&registry);
         let runtime = runtime.inner();
+        let bridge = bridge.clone();
 
         tokio::spawn(async move {
-            if let Err(err) = handle_connection(stream, registry, runtime).await {
+            if let Err(err) = handle_connection(stream, registry, runtime, bridge).await {
                 eprintln!("connection error: {err}");
             }
         });
@@ -41,6 +74,7 @@ async fn handle_connection(
     mut stream: tokio::net::TcpStream,
     registry: Arc<TenantRegistry>,
     runtime: Arc<crate::runtime::ShardRuntime>,
+    bridge: bridge::LedgerBridge,
 ) -> Result<(), String> {
     let mut tenant_id = "default".to_string();
     let mut tenant_limit_bytes = 64 * 1024 * 1024u64;
@@ -69,6 +103,7 @@ async fn handle_connection(
                         &mut tenant_id,
                         &mut tenant_limit_bytes,
                         &mut tenant_cpu_quota_micros,
+                        &bridge,
                     )
                     .await;
                     stream
@@ -94,13 +129,14 @@ async fn handle_command(
     tenant_id: &mut String,
     tenant_limit_bytes: &mut u64,
     tenant_cpu_quota_micros: &mut u64,
+    bridge: &bridge::LedgerBridge,
 ) -> RespValue {
     if cmd.is_empty() {
         return RespValue::Error("ERR empty command".to_string());
     }
 
     let command = cmd[0].to_uppercase();
-    match command.as_str() {
+    let response = match command.as_str() {
         "PING" => runtime
             .execute(
                 tenant_id.clone(),
@@ -683,6 +719,356 @@ async fn handle_command(
                 _ => RespValue::Error("ERR value is not an integer or out of range".to_string()),
             }
         }
+        "INCR" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for INCR".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Incr {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "DECR" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for DECR".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Decr {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "INCRBY" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for INCRBY".to_string());
+            }
+            match cmd[2].parse::<i64>() {
+                Ok(delta) => runtime
+                    .execute(
+                        tenant_id.clone(),
+                        *tenant_limit_bytes,
+                        *tenant_cpu_quota_micros,
+                        Command::Incrby {
+                            key: cmd[1].clone(),
+                            delta,
+                        },
+                    )
+                    .await,
+                Err(_) => RespValue::Error("ERR value is not an integer or out of range".to_string()),
+            }
+        }
+        "DECRBY" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for DECRBY".to_string());
+            }
+            match cmd[2].parse::<i64>() {
+                Ok(delta) => runtime
+                    .execute(
+                        tenant_id.clone(),
+                        *tenant_limit_bytes,
+                        *tenant_cpu_quota_micros,
+                        Command::Decrby {
+                            key: cmd[1].clone(),
+                            delta,
+                        },
+                    )
+                    .await,
+                Err(_) => RespValue::Error("ERR value is not an integer or out of range".to_string()),
+            }
+        }
+        "APPEND" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for APPEND".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Append {
+                        key: cmd[1].clone(),
+                        value: cmd[2].as_bytes().to_vec(),
+                    },
+                )
+                .await
+        }
+        "EXISTS" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for EXISTS".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Exists {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "TYPE" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for TYPE".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Type {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "PERSIST" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for PERSIST".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Persist {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "PTTL" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for PTTL".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Pttl {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "MSET" => {
+            if cmd.len() < 3 || (cmd.len() - 1) % 2 != 0 {
+                return RespValue::Error("ERR wrong number of arguments for MSET".to_string());
+            }
+            let mut pairs = Vec::with_capacity((cmd.len() - 1) / 2);
+            let mut idx = 1;
+            while idx + 1 < cmd.len() {
+                pairs.push((cmd[idx].clone(), cmd[idx + 1].as_bytes().to_vec()));
+                idx += 2;
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Mset { pairs },
+                )
+                .await
+        }
+        "MGET" => {
+            if cmd.len() < 2 {
+                return RespValue::Error("ERR wrong number of arguments for MGET".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Mget {
+                        keys: cmd[1..].to_vec(),
+                    },
+                )
+                .await
+        }
+        "KEYS" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for KEYS".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Keys {
+                        pattern: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "FLUSHDB" => {
+            if cmd.len() != 1 {
+                return RespValue::Error("ERR wrong number of arguments for FLUSHDB".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Flushdb,
+                )
+                .await
+        }
+        "RENAME" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for RENAME".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Rename {
+                        from: cmd[1].clone(),
+                        to: cmd[2].clone(),
+                    },
+                )
+                .await
+        }
+        "ZRANK" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for ZRANK".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Zrank {
+                        key: cmd[1].clone(),
+                        member: cmd[2].clone(),
+                    },
+                )
+                .await
+        }
+        "ZREVRANGE" => {
+            if cmd.len() != 4 {
+                return RespValue::Error("ERR wrong number of arguments for ZREVRANGE".to_string());
+            }
+            match (cmd[2].parse::<i64>(), cmd[3].parse::<i64>()) {
+                (Ok(start), Ok(stop)) => runtime
+                    .execute(
+                        tenant_id.clone(),
+                        *tenant_limit_bytes,
+                        *tenant_cpu_quota_micros,
+                        Command::Zrevrange {
+                            key: cmd[1].clone(),
+                            start,
+                            stop,
+                        },
+                    )
+                    .await,
+                _ => RespValue::Error("ERR value is not an integer or out of range".to_string()),
+            }
+        }
+        "SUNION" => {
+            if cmd.len() < 2 {
+                return RespValue::Error("ERR wrong number of arguments for SUNION".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Sunion {
+                        keys: cmd[1..].to_vec(),
+                    },
+                )
+                .await
+        }
+        "SDIFF" => {
+            if cmd.len() < 2 {
+                return RespValue::Error("ERR wrong number of arguments for SDIFF".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Sdiff {
+                        keys: cmd[1..].to_vec(),
+                    },
+                )
+                .await
+        }
         _ => RespValue::Error("ERR unknown command".to_string()),
+    };
+
+    // Emit a verifiable audit event to StateLedger for mutating commands.
+    if bridge.enabled() && is_audit_command(&command) && !matches!(response, RespValue::Error(_)) {
+        if let Some(event) = audit_event(&command, cmd, tenant_id) {
+            bridge.emit(event);
+        }
     }
+
+    response
+}
+
+/// Returns true for commands that mutate tenant state and should be audited.
+fn is_audit_command(command: &str) -> bool {
+    matches!(
+        command,
+        "SET"
+            | "DEL"
+            | "EXPIRE"
+            | "HSET"
+            | "HDEL"
+            | "HINCRBY"
+            | "SADD"
+            | "SREM"
+            | "ZADD"
+            | "ZREM"
+            | "LPUSH"
+            | "RPUSH"
+            | "LPOP"
+            | "RPOP"
+            | "INCR"
+            | "DECR"
+            | "INCRBY"
+            | "DECRBY"
+            | "APPEND"
+            | "PERSIST"
+            | "MSET"
+            | "FLUSHDB"
+            | "RENAME"
+    )
+}
+
+/// Build an `AuditEvent` for a mutating command. Returns None for commands
+/// whose arguments are malformed (already rejected earlier, so this is just a
+/// safety net).
+fn audit_event(command: &str, cmd: &[String], tenant_id: &str) -> Option<bridge::AuditEvent> {
+    let key = match command {
+        "MSET" => format!("{} keys", (cmd.len() - 1) / 2),
+        "MGET" => format!("{} keys", cmd.len() - 1),
+        "FLUSHDB" => "*".to_string(),
+        "RENAME" if cmd.len() >= 3 => format!("{} -> {}", cmd[1], cmd[2]),
+        "SUNION" | "SDIFF" => cmd[1..].join(","),
+        _ if cmd.len() >= 2 => cmd[1].clone(),
+        _ => return None,
+    };
+
+    let summary = cmd.join(" ");
+    Some(bridge::AuditEvent {
+        tenant: tenant_id.to_string(),
+        command: command.to_string(),
+        key,
+        summary,
+    })
 }

@@ -3,7 +3,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 /// AOF (Append-Only File) persistence manager
 /// Provides crash recovery and durability guarantees per tenant
@@ -140,6 +140,7 @@ impl AofManager {
     }
 
     /// Rewrite AOF file to compact it (remove redundant commands)
+    #[allow(dead_code)]
     pub fn rewrite_aof(&self, tenant_id: &str, snapshot_commands: Vec<Vec<String>>) -> std::io::Result<()> {
         let mut inner = self.inner.write().unwrap();
         let aof_path = inner.base_dir.join(format!("{}.aof", tenant_id));
@@ -179,6 +180,7 @@ impl AofManager {
     }
 
     /// Flush all buffers and sync to disk
+    #[allow(dead_code)]
     pub fn flush_all(&self) -> std::io::Result<()> {
         let mut inner = self.inner.write().unwrap();
         for writer in inner.files.values_mut() {
@@ -189,6 +191,7 @@ impl AofManager {
     }
 
     /// Close AOF file for a tenant
+    #[allow(dead_code)]
     pub fn close_tenant(&self, tenant_id: &str) -> std::io::Result<()> {
         let mut inner = self.inner.write().unwrap();
         if let Some(mut writer) = inner.files.remove(tenant_id) {
@@ -198,12 +201,29 @@ impl AofManager {
         inner.last_fsync.remove(tenant_id);
         Ok(())
     }
+
+    /// List tenant IDs that have an existing AOF file on disk. Used during
+    /// startup recovery to discover which tenants need replaying.
+    pub fn list_tenants(&self) -> Vec<String> {
+        let inner = self.inner.read().unwrap();
+        let mut tenants = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&inner.base_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("aof") {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        tenants.push(stem.to_string());
+                    }
+                }
+            }
+        }
+        tenants
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn test_aof_basic_logging() {

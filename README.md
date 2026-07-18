@@ -146,11 +146,12 @@ UltraCache supports the following Redis-compatible data types:
 
 | Type | Operations | Use Case |
 |------|-----------|----------|
-| **String** | GET, SET, DEL, EXPIRE, TTL | Simple key-value caching |
+| **String** | GET, SET, DEL, EXPIRE, TTL, INCR, DECR, INCRBY, DECRBY, APPEND, EXISTS, TYPE, PERSIST, PTTL, MSET, MGET | Simple key-value caching, counters, batched ops |
 | **Hash** | HSET, HGET, HDEL, HINCRBY, HGETALL, HKEYS, HVALS | Object/document caching |
-| **Set** | SADD, SREM, SMEMBERS, SINTER, SCARD, SISMEMBER | Membership tracking, deduplication |
-| **Sorted Set** | ZADD, ZREM, ZRANGE, ZSCORE, ZCARD | Leaderboards, time-series, scoring |
+| **Set** | SADD, SREM, SMEMBERS, SINTER, SCARD, SISMEMBER, SUNION, SDIFF | Membership tracking, deduplication, set algebra |
+| **Sorted Set** | ZADD, ZREM, ZRANGE, ZSCORE, ZCARD, ZRANK, ZREVRANGE | Leaderboards, time-series, scoring |
 | **List** | LPUSH, RPUSH, LPOP, RPOP, LLEN, LRANGE | Queues, activity feeds, sequences |
+| **Keyspace** | KEYS, FLUSHDB, RENAME | Introspection and key management |
 
 ### Multi-Tenancy
 
@@ -165,6 +166,41 @@ UltraCache supports the following Redis-compatible data types:
 * **Configurable fsync** - Three durability levels (Always, EverySecond, No)
 * **Log compaction** - Automatic rewrite for space efficiency
 * **Crash recovery** - Replay AOF on startup
+
+### Verifiable Audit Bridge (UltraCache ↔ StateLedger)
+
+UltraCache can publish an **immutable, verifiable audit trail** of every mutating
+command to [StateLedger](https://github.com/Retr0-XD/StateLedger), a durable
+hash-chained state ledger. The result is a **verifiable cache**: every
+`SET`/`DEL`/`INCR`/etc. can later be proven to have happened, in order, by
+querying StateLedger and verifying its hash chain + Merkle root.
+
+* **Best-effort, non-blocking** — a failed emission never blocks or fails the
+  cache operation.
+* **Optional** — when no endpoint is configured, the bridge is a no-op.
+* **Async worker** — events are buffered on an unbounded channel and POSTed by a
+  background task using `reqwest` (rustls TLS, no OpenSSL dependency).
+
+Enable it with the `--ledger-url` flag or the `ULTRACACHE_LEDGER_URL` env var:
+
+```bash
+./target/release/ultracache \
+  --ledger-url http://localhost:8080
+```
+
+Each emitted record is a `cache.audit` event with a JSON payload of the form:
+
+```json
+{
+  "tenant": "acme",
+  "command": "SET",
+  "key": "user:1",
+  "summary": "SET user:1 hello"
+}
+```
+
+StateLedger appends it to its hash chain, so the audit log is tamper-evident and
+Merkle-provable. See the StateLedger README for how to verify records.
 
 ### Performance
 
@@ -306,10 +342,23 @@ UltraCache can be configured via environment variables and command-line argument
 
 ```bash
 ./target/release/ultracache \
-  --host 0.0.0.0 \
-  --port 6379 \
-  --max-tenants 1000
+  --addr 0.0.0.0:6379 \
+  --shards 8 \
+  --aof \
+  --aof-dir ./data/aof \
+  --aof-fsync everysec \
+  --ledger-url http://localhost:8080
 ```
+
+| Flag / Env | Default | Description |
+|------------|---------|-------------|
+| `--addr` / `ULTRACACHE_ADDR` | `0.0.0.0:6379` | Bind address |
+| `--shards` / `ULTRACACHE_SHARDS` | # of CPUs | Number of shards |
+| `--config` / `ULTRACACHE_CONFIG` | — | JSON/TOML config file |
+| `--aof` / `ULTRACACHE_AOF` | off | Enable AOF persistence |
+| `--aof-dir` / `ULTRACACHE_AOF_DIR` | `./data/aof` | AOF directory |
+| `--aof-fsync` / `ULTRACACHE_AOF_FSYNC` | `everysec` | `always`/`everysec`/`no` |
+| `--ledger-url` / `ULTRACACHE_LEDGER_URL` | — | StateLedger audit endpoint |
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed configuration options.
 
