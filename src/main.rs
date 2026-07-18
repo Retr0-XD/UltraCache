@@ -206,9 +206,80 @@ async fn handle_command(
                 )
                 .await
         }
-        "SET" => {
+        "GETSET" => {
             if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for GETSET".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::GetSet {
+                        key: cmd[1].clone(),
+                        value: cmd[2].as_bytes().to_vec(),
+                    },
+                )
+                .await
+        }
+        "STRLEN" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for STRLEN".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::StrLen {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "SET" => {
+            if cmd.len() < 3 {
                 return RespValue::Error("ERR wrong number of arguments for SET".to_string());
+            }
+            let mut ex: Option<i64> = None;
+            let mut px: Option<i64> = None;
+            let mut nx = false;
+            let mut xx = false;
+            let mut i = 3;
+            while i < cmd.len() {
+                match cmd[i].to_uppercase().as_str() {
+                    "EX" if i + 1 < cmd.len() => {
+                        match cmd[i + 1].parse::<i64>() {
+                            Ok(v) => ex = Some(v),
+                            Err(_) => {
+                                return RespValue::Error(
+                                    "ERR value is not an integer or out of range".to_string(),
+                                );
+                            }
+                        }
+                        i += 2;
+                    }
+                    "PX" if i + 1 < cmd.len() => {
+                        match cmd[i + 1].parse::<i64>() {
+                            Ok(v) => px = Some(v),
+                            Err(_) => {
+                                return RespValue::Error(
+                                    "ERR value is not an integer or out of range".to_string(),
+                                );
+                            }
+                        }
+                        i += 2;
+                    }
+                    "NX" => {
+                        nx = true;
+                        i += 1;
+                    }
+                    "XX" => {
+                        xx = true;
+                        i += 1;
+                    }
+                    _ => return RespValue::Error("ERR syntax error in SET options".to_string()),
+                }
             }
             runtime
                 .execute(
@@ -218,6 +289,10 @@ async fn handle_command(
                     Command::Set {
                         key: cmd[1].clone(),
                         value: cmd[2].as_bytes().to_vec(),
+                        ex,
+                        px,
+                        nx,
+                        xx,
                     },
                 )
                 .await
@@ -251,6 +326,75 @@ async fn handle_command(
                             Command::Expire {
                                 key: cmd[1].clone(),
                                 seconds,
+                            },
+                        )
+                        .await
+                }
+                Err(_) => {
+                    RespValue::Error("ERR value is not an integer or out of range".to_string())
+                }
+            }
+        }
+        "PEXPIRE" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for PEXPIRE".to_string());
+            }
+            match cmd[2].parse::<i64>() {
+                Ok(milliseconds) => {
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::Pexpire {
+                                key: cmd[1].clone(),
+                                milliseconds,
+                            },
+                        )
+                        .await
+                }
+                Err(_) => {
+                    RespValue::Error("ERR value is not an integer or out of range".to_string())
+                }
+            }
+        }
+        "PEXPIREAT" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for PEXPIREAT".to_string());
+            }
+            match cmd[2].parse::<i64>() {
+                Ok(timestamp) => {
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::Pexpireat {
+                                key: cmd[1].clone(),
+                                milliseconds_timestamp: timestamp,
+                            },
+                        )
+                        .await
+                }
+                Err(_) => {
+                    RespValue::Error("ERR value is not an integer or out of range".to_string())
+                }
+            }
+        }
+        "EXPIREAT" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for EXPIREAT".to_string());
+            }
+            match cmd[2].parse::<i64>() {
+                Ok(timestamp) => {
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::Expireat {
+                                key: cmd[1].clone(),
+                                timestamp,
                             },
                         )
                         .await
@@ -363,6 +507,50 @@ async fn handle_command(
                 )
                 .await
         }
+        "HINCRBYFLOAT" => {
+            if cmd.len() != 4 {
+                return RespValue::Error(
+                    "ERR wrong number of arguments for HINCRBYFLOAT".to_string(),
+                );
+            }
+            let delta = match cmd[3].parse::<f64>() {
+                Ok(delta) => delta,
+                Err(_) => {
+                    return RespValue::Error(
+                        "ERR value is not a float or out of range".to_string(),
+                    );
+                }
+            };
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Hincrbyfloat {
+                        key: cmd[1].clone(),
+                        field: cmd[2].clone(),
+                        delta,
+                    },
+                )
+                .await
+        }
+        "HSETNX" => {
+            if cmd.len() != 4 {
+                return RespValue::Error("ERR wrong number of arguments for HSETNX".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Hsetnx {
+                        key: cmd[1].clone(),
+                        field: cmd[2].clone(),
+                        value: cmd[3].as_bytes().to_vec(),
+                    },
+                )
+                .await
+        }
         "SADD" => {
             if cmd.len() < 3 {
                 return RespValue::Error("ERR wrong number of arguments for SADD".to_string());
@@ -425,6 +613,38 @@ async fn handle_command(
                     *tenant_limit_bytes,
                     *tenant_cpu_quota_micros,
                     Command::Smembers {
+                        key: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "SMOVE" => {
+            if cmd.len() != 4 {
+                return RespValue::Error("ERR wrong number of arguments for SMOVE".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Smove {
+                        source: cmd[1].clone(),
+                        destination: cmd[2].clone(),
+                        member: cmd[3].clone(),
+                    },
+                )
+                .await
+        }
+        "SPOP" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for SPOP".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Spop {
                         key: cmd[1].clone(),
                     },
                 )
@@ -558,6 +778,84 @@ async fn handle_command(
                 )
                 .await
         }
+        "ZINCRBY" => {
+            if cmd.len() != 4 {
+                return RespValue::Error("ERR wrong number of arguments for ZINCRBY".to_string());
+            }
+            let delta = match cmd[2].parse::<f64>() {
+                Ok(delta) => delta,
+                Err(_) => {
+                    return RespValue::Error("ERR value is not a valid float".to_string());
+                }
+            };
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Zincrby {
+                        key: cmd[1].clone(),
+                        delta,
+                        member: cmd[3].clone(),
+                    },
+                )
+                .await
+        }
+        "ZRANGEBYSCORE" => {
+            if cmd.len() != 4 {
+                return RespValue::Error(
+                    "ERR wrong number of arguments for ZRANGEBYSCORE".to_string(),
+                );
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Zrangebyscore {
+                        key: cmd[1].clone(),
+                        min: cmd[2].clone(),
+                        max: cmd[3].clone(),
+                    },
+                )
+                .await
+        }
+        "ZREMRANGEBYSCORE" => {
+            if cmd.len() != 4 {
+                return RespValue::Error(
+                    "ERR wrong number of arguments for ZREMRANGEBYSCORE".to_string(),
+                );
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Zremrangebyscore {
+                        key: cmd[1].clone(),
+                        min: cmd[2].clone(),
+                        max: cmd[3].clone(),
+                    },
+                )
+                .await
+        }
+        "ZCOUNT" => {
+            if cmd.len() != 4 {
+                return RespValue::Error("ERR wrong number of arguments for ZCOUNT".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Zcount {
+                        key: cmd[1].clone(),
+                        min: cmd[2].clone(),
+                        max: cmd[3].clone(),
+                    },
+                )
+                .await
+        }
         "HGETALL" => {
             if cmd.len() != 2 {
                 return RespValue::Error("ERR wrong number of arguments for HGETALL".to_string());
@@ -650,6 +948,22 @@ async fn handle_command(
                 )
                 .await
         }
+        "LPUSHX" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for LPUSHX".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Lpushx {
+                        key: cmd[1].clone(),
+                        value: cmd[2].as_bytes().to_vec(),
+                    },
+                )
+                .await
+        }
         "RPUSH" => {
             if cmd.len() != 3 {
                 return RespValue::Error("ERR wrong number of arguments for RPUSH".to_string());
@@ -660,6 +974,22 @@ async fn handle_command(
                     *tenant_limit_bytes,
                     *tenant_cpu_quota_micros,
                     Command::Rpush {
+                        key: cmd[1].clone(),
+                        value: cmd[2].as_bytes().to_vec(),
+                    },
+                )
+                .await
+        }
+        "RPUSHX" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for RPUSHX".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Rpushx {
                         key: cmd[1].clone(),
                         value: cmd[2].as_bytes().to_vec(),
                     },
@@ -732,6 +1062,102 @@ async fn handle_command(
                 }
                 _ => RespValue::Error("ERR value is not an integer or out of range".to_string()),
             }
+        }
+        "LINDEX" => {
+            if cmd.len() != 3 {
+                return RespValue::Error("ERR wrong number of arguments for LINDEX".to_string());
+            }
+            match cmd[2].parse::<i64>() {
+                Ok(index) => {
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::Lindex {
+                                key: cmd[1].clone(),
+                                index,
+                            },
+                        )
+                        .await
+                }
+                Err(_) => {
+                    RespValue::Error("ERR value is not an integer or out of range".to_string())
+                }
+            }
+        }
+        "LSET" => {
+            if cmd.len() != 4 {
+                return RespValue::Error("ERR wrong number of arguments for LSET".to_string());
+            }
+            match cmd[2].parse::<i64>() {
+                Ok(index) => {
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::Lset {
+                                key: cmd[1].clone(),
+                                index,
+                                value: cmd[3].as_bytes().to_vec(),
+                            },
+                        )
+                        .await
+                }
+                Err(_) => {
+                    RespValue::Error("ERR value is not an integer or out of range".to_string())
+                }
+            }
+        }
+        "LTRIM" => {
+            if cmd.len() != 4 {
+                return RespValue::Error("ERR wrong number of arguments for LTRIM".to_string());
+            }
+            match (cmd[2].parse::<i64>(), cmd[3].parse::<i64>()) {
+                (Ok(start), Ok(stop)) => {
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::Ltrim {
+                                key: cmd[1].clone(),
+                                start,
+                                stop,
+                            },
+                        )
+                        .await
+                }
+                _ => RespValue::Error("ERR value is not an integer or out of range".to_string()),
+            }
+        }
+        "LINSERT" => {
+            if cmd.len() != 5 {
+                return RespValue::Error("ERR wrong number of arguments for LINSERT".to_string());
+            }
+            let before = match cmd[2].to_uppercase().as_str() {
+                "BEFORE" => true,
+                "AFTER" => false,
+                _ => {
+                    return RespValue::Error(
+                        "ERR syntax error: LINSERT must be BEFORE or AFTER".to_string(),
+                    );
+                }
+            };
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Linsert {
+                        key: cmd[1].clone(),
+                        before,
+                        pivot: cmd[3].as_bytes().to_vec(),
+                        value: cmd[4].as_bytes().to_vec(),
+                    },
+                )
+                .await
         }
         "INCR" => {
             if cmd.len() != 2 {
@@ -1031,6 +1457,103 @@ async fn handle_command(
                 )
                 .await
         }
+        "DBSIZE" => {
+            if cmd.len() != 1 {
+                return RespValue::Error("ERR wrong number of arguments for DBSIZE".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Dbsize,
+                )
+                .await
+        }
+        "RANDOMKEY" => {
+            if cmd.len() != 1 {
+                return RespValue::Error("ERR wrong number of arguments for RANDOMKEY".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Randomkey,
+                )
+                .await
+        }
+        "ECHO" => {
+            if cmd.len() != 2 {
+                return RespValue::Error("ERR wrong number of arguments for ECHO".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Echo {
+                        message: cmd[1].clone(),
+                    },
+                )
+                .await
+        }
+        "INFO" => {
+            if cmd.len() != 1 {
+                return RespValue::Error("ERR wrong number of arguments for INFO".to_string());
+            }
+            runtime
+                .execute(
+                    tenant_id.clone(),
+                    *tenant_limit_bytes,
+                    *tenant_cpu_quota_micros,
+                    Command::Info,
+                )
+                .await
+        }
+        "CONFIG" => {
+            if cmd.len() < 2 {
+                return RespValue::Error("ERR wrong number of arguments for CONFIG".to_string());
+            }
+            match cmd[1].to_uppercase().as_str() {
+                "GET" => {
+                    if cmd.len() != 3 {
+                        return RespValue::Error(
+                            "ERR wrong number of arguments for CONFIG GET".to_string(),
+                        );
+                    }
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::ConfigGet {
+                                parameter: cmd[2].clone(),
+                            },
+                        )
+                        .await
+                }
+                "SET" => {
+                    if cmd.len() != 4 {
+                        return RespValue::Error(
+                            "ERR wrong number of arguments for CONFIG SET".to_string(),
+                        );
+                    }
+                    runtime
+                        .execute(
+                            tenant_id.clone(),
+                            *tenant_limit_bytes,
+                            *tenant_cpu_quota_micros,
+                            Command::ConfigSet {
+                                parameter: cmd[2].clone(),
+                                value: cmd[3].clone(),
+                            },
+                        )
+                        .await
+                }
+                _ => RespValue::Error("ERR CONFIG subcommand must be GET or SET".to_string()),
+            }
+        }
         _ => RespValue::Error("ERR unknown command".to_string()),
     };
 
@@ -1053,26 +1576,42 @@ fn is_audit_command(command: &str) -> bool {
         "SET"
             | "DEL"
             | "EXPIRE"
+            | "PEXPIRE"
+            | "PEXPIREAT"
+            | "EXPIREAT"
             | "HSET"
             | "HDEL"
             | "HINCRBY"
+            | "HINCRBYFLOAT"
+            | "HSETNX"
             | "SADD"
             | "SREM"
+            | "SMOVE"
+            | "SPOP"
             | "ZADD"
             | "ZREM"
+            | "ZINCRBY"
+            | "ZREMRANGEBYSCORE"
             | "LPUSH"
             | "RPUSH"
+            | "LPUSHX"
+            | "RPUSHX"
             | "LPOP"
             | "RPOP"
+            | "LSET"
+            | "LTRIM"
+            | "LINSERT"
             | "INCR"
             | "DECR"
             | "INCRBY"
             | "DECRBY"
             | "APPEND"
+            | "GETSET"
             | "PERSIST"
             | "MSET"
             | "FLUSHDB"
             | "RENAME"
+            | "CONFIG"
     )
 }
 

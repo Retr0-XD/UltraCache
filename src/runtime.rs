@@ -19,6 +19,19 @@ pub enum Command {
     Set {
         key: String,
         value: Vec<u8>,
+        /// Optional TTL in seconds (EX) or milliseconds (PX).
+        ex: Option<i64>,
+        px: Option<i64>,
+        /// NX: only set if key does not exist. XX: only set if key exists.
+        nx: bool,
+        xx: bool,
+    },
+    GetSet {
+        key: String,
+        value: Vec<u8>,
+    },
+    StrLen {
+        key: String,
     },
     Del {
         key: String,
@@ -49,6 +62,16 @@ pub enum Command {
         field: String,
         delta: i64,
     },
+    Hincrbyfloat {
+        key: String,
+        field: String,
+        delta: f64,
+    },
+    Hsetnx {
+        key: String,
+        field: String,
+        value: Vec<u8>,
+    },
     Hgetall {
         key: String,
     },
@@ -67,6 +90,14 @@ pub enum Command {
         key: String,
         member: String,
     },
+    Smove {
+        source: String,
+        destination: String,
+        member: String,
+    },
+    Spop {
+        key: String,
+    },
     Smembers {
         key: String,
     },
@@ -83,9 +114,29 @@ pub enum Command {
         score: f64,
         member: String,
     },
+    Zincrby {
+        key: String,
+        delta: f64,
+        member: String,
+    },
     Zrem {
         key: String,
         member: String,
+    },
+    Zrangebyscore {
+        key: String,
+        min: String,
+        max: String,
+    },
+    Zremrangebyscore {
+        key: String,
+        min: String,
+        max: String,
+    },
+    Zcount {
+        key: String,
+        min: String,
+        max: String,
     },
     Zrange {
         key: String,
@@ -104,8 +155,36 @@ pub enum Command {
         key: String,
         value: Vec<u8>,
     },
+    Lpushx {
+        key: String,
+        value: Vec<u8>,
+    },
     Rpush {
         key: String,
+        value: Vec<u8>,
+    },
+    Rpushx {
+        key: String,
+        value: Vec<u8>,
+    },
+    Lindex {
+        key: String,
+        index: i64,
+    },
+    Lset {
+        key: String,
+        index: i64,
+        value: Vec<u8>,
+    },
+    Ltrim {
+        key: String,
+        start: i64,
+        stop: i64,
+    },
+    Linsert {
+        key: String,
+        before: bool,
+        pivot: Vec<u8>,
         value: Vec<u8>,
     },
     Lpop {
@@ -153,6 +232,18 @@ pub enum Command {
     Pttl {
         key: String,
     },
+    Pexpire {
+        key: String,
+        milliseconds: i64,
+    },
+    Pexpireat {
+        key: String,
+        milliseconds_timestamp: i64,
+    },
+    Expireat {
+        key: String,
+        timestamp: i64,
+    },
     // Bulk / multi-key commands
     Mset {
         pairs: Vec<(String, Vec<u8>)>,
@@ -167,6 +258,19 @@ pub enum Command {
     Rename {
         from: String,
         to: String,
+    },
+    Dbsize,
+    Randomkey,
+    Echo {
+        message: String,
+    },
+    Info,
+    ConfigGet {
+        parameter: String,
+    },
+    ConfigSet {
+        parameter: String,
+        value: String,
     },
     // Sorted set extensions
     Zrank {
@@ -425,13 +529,20 @@ impl ShardRuntime {
         match command {
             Command::Get { key }
             | Command::Set { key, .. }
+            | Command::GetSet { key, .. }
+            | Command::StrLen { key }
             | Command::Del { key }
             | Command::Expire { key, .. }
+            | Command::Pexpire { key, .. }
+            | Command::Pexpireat { key, .. }
+            | Command::Expireat { key, .. }
             | Command::Ttl { key }
             | Command::Hget { key, .. }
             | Command::Hset { key, .. }
             | Command::Hdel { key, .. }
             | Command::Hincrby { key, .. }
+            | Command::Hincrbyfloat { key, .. }
+            | Command::Hsetnx { key, .. }
             | Command::Hgetall { key }
             | Command::Hkeys { key }
             | Command::Hvals { key }
@@ -440,15 +551,26 @@ impl ShardRuntime {
             | Command::Smembers { key }
             | Command::Scard { key }
             | Command::Sismember { key, .. }
+            | Command::Spop { key }
             | Command::Zadd { key, .. }
             | Command::Zrem { key, .. }
+            | Command::Zincrby { key, .. }
             | Command::Zrange { key, .. }
+            | Command::Zrangebyscore { key, .. }
+            | Command::Zremrangebyscore { key, .. }
+            | Command::Zcount { key, .. }
             | Command::Zcard { key }
             | Command::Zscore { key, .. }
             | Command::Lpush { key, .. }
+            | Command::Lpushx { key, .. }
             | Command::Rpush { key, .. }
+            | Command::Rpushx { key, .. }
             | Command::Lpop { key }
             | Command::Rpop { key }
+            | Command::Lindex { key, .. }
+            | Command::Lset { key, .. }
+            | Command::Ltrim { key, .. }
+            | Command::Linsert { key, .. }
             | Command::Llen { key }
             | Command::Lrange { key, .. }
             | Command::Incr { key }
@@ -477,10 +599,42 @@ impl ShardRuntime {
             Command::Zrank { key, .. } | Command::Zrevrange { key, .. } => {
                 key.hash(&mut hasher);
             }
-            Command::Flushdb | Command::Ping | Command::Stats => {}
+            Command::Smove {
+                source,
+                destination,
+                ..
+            } => {
+                source.hash(&mut hasher);
+                destination.hash(&mut hasher);
+            }
+            Command::Flushdb
+            | Command::Ping
+            | Command::Stats
+            | Command::Dbsize
+            | Command::Randomkey
+            | Command::Echo { .. }
+            | Command::Info
+            | Command::ConfigGet { .. }
+            | Command::ConfigSet { .. } => {}
         }
         let hash = hasher.finish() as usize;
         hash % self.shards.len()
+    }
+}
+
+/// Parse a ZSET min/max bound. Supports `-inf`, `+inf`, and an optional `(`
+/// exclusive prefix (Redis convention). Returns `(value, is_exclusive)`.
+fn parse_zbound(s: &str) -> (f64, bool) {
+    match s {
+        "-inf" => (f64::NEG_INFINITY, false),
+        "+inf" => (f64::INFINITY, false),
+        _ => {
+            if let Some(rest) = s.strip_prefix('(') {
+                (rest.parse::<f64>().unwrap_or(f64::NEG_INFINITY), true)
+            } else {
+                (s.parse::<f64>().unwrap_or(f64::INFINITY), false)
+            }
+        }
     }
 }
 
@@ -566,12 +720,90 @@ fn handle_command(
                 None => RespValue::BulkString(None),
             }
         }
-        Command::Set { ref key, ref value } => {
+        Command::Set {
+            ref key,
+            ref value,
+            ex,
+            px,
+            nx,
+            xx,
+        } => {
+            let k = tenant_key(&tenant_id, key);
+            let exists = state.cache.peek(&k).is_some();
+
+            // Conditional semantics: NX requires the key to be absent, XX
+            // requires it to be present.
+            if nx && exists {
+                return RespValue::BulkString(None);
+            }
+            if xx && !exists {
+                return RespValue::BulkString(None);
+            }
+
+            let entry_size = entry_size_bytes(&k, value);
+            if entry_size > state.limit_bytes {
+                return RespValue::Error("ERR tenant memory limit exceeded".to_string());
+            }
+
+            if let Some(existing) = state.cache.pop(&k) {
+                state.used_bytes = state.used_bytes.saturating_sub(existing.size);
+            }
+
+            let mut projected = state.used_bytes + entry_size;
+            while projected > state.limit_bytes {
+                if let Some((_ek, ev)) = state.cache.pop_lru() {
+                    state.used_bytes = state.used_bytes.saturating_sub(ev.size);
+                    state.record_eviction();
+                    projected = state.used_bytes + entry_size;
+                } else {
+                    return RespValue::Error("ERR tenant memory limit exceeded".to_string());
+                }
+            }
+
+            // Resolve TTL: PX (millis) takes precedence over EX (seconds).
+            let expires_at = if let Some(ms) = px {
+                if ms <= 0 {
+                    None
+                } else {
+                    Some(current_timestamp() + (ms as u64).div_ceil(1000))
+                }
+            } else if let Some(secs) = ex {
+                if secs <= 0 {
+                    None
+                } else {
+                    Some(current_timestamp() + secs as u64)
+                }
+            } else {
+                None
+            };
+
+            let entry = Entry {
+                data: EntryData::String(value.to_vec()),
+                expires_at,
+                size: entry_size,
+            };
+            state.cache.put(k, entry);
+            state.used_bytes = state.used_bytes.saturating_add(entry_size);
+            RespValue::SimpleString("OK".to_string())
+        }
+        Command::GetSet { ref key, ref value } => {
             let k = tenant_key(&tenant_id, key);
             let entry_size = entry_size_bytes(&k, value);
             if entry_size > state.limit_bytes {
                 return RespValue::Error("ERR tenant memory limit exceeded".to_string());
             }
+
+            // Capture the previous string value (for the response) before
+            // replacing. Non-string keys are overwritten and return nil.
+            let previous: Option<Vec<u8>> = state.cache.get(&k).and_then(|e| {
+                if TenantState::is_expired(e) {
+                    None
+                } else if let EntryData::String(bytes) = &e.data {
+                    Some(bytes.clone())
+                } else {
+                    None
+                }
+            });
 
             if let Some(existing) = state.cache.pop(&k) {
                 state.used_bytes = state.used_bytes.saturating_sub(existing.size);
@@ -595,7 +827,30 @@ fn handle_command(
             };
             state.cache.put(k, entry);
             state.used_bytes = state.used_bytes.saturating_add(entry_size);
-            RespValue::SimpleString("OK".to_string())
+
+            match previous {
+                Some(bytes) => RespValue::BulkString(Some(bytes)),
+                None => RespValue::BulkString(None),
+            }
+        }
+        Command::StrLen { ref key } => {
+            let k = tenant_key(&tenant_id, key);
+            match state.cache.get(&k) {
+                Some(entry) => {
+                    if TenantState::is_expired(entry) {
+                        state.remove(&k);
+                        return RespValue::Integer(0);
+                    }
+                    match &entry.data {
+                        EntryData::String(bytes) => RespValue::Integer(bytes.len() as i64),
+                        _ => RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        ),
+                    }
+                }
+                None => RespValue::Integer(0),
+            }
         }
         Command::Del { ref key } => {
             let k = tenant_key(&tenant_id, key);
@@ -780,6 +1035,113 @@ fn handle_command(
             state.cache.put(k, entry);
             RespValue::Integer(next)
         }
+        Command::Hincrbyfloat {
+            ref key,
+            ref field,
+            delta,
+        } => {
+            let k = tenant_key(&tenant_id, key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&k);
+                } else {
+                    match &mut entry.data {
+                        EntryData::Hash(map) => {
+                            let current = match map.get(field) {
+                                Some(val) => match std::str::from_utf8(val)
+                                    .ok()
+                                    .and_then(|s| s.parse::<f64>().ok())
+                                {
+                                    Some(num) => num,
+                                    None => {
+                                        return RespValue::Error(
+                                            "ERR hash value is not a float".to_string(),
+                                        );
+                                    }
+                                },
+                                None => 0.0,
+                            };
+                            let next = current + delta;
+                            // Normalize to avoid "-0" and excessive precision.
+                            let encoded = format!("{next:.17}").into_bytes();
+                            map.insert(field.to_string(), encoded);
+                            reconcile_entry_size(state, &k);
+                            return RespValue::BulkString(Some(next.to_string().into_bytes()));
+                        }
+                        _ => {
+                            return RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+            }
+
+            let mut map = HashMap::new();
+            let next = delta;
+            map.insert(field.clone(), next.to_string().into_bytes());
+            let size = calculate_entry_size(&k, &EntryData::Hash(map.clone()));
+            let entry = Entry {
+                data: EntryData::Hash(map),
+                expires_at: None,
+                size,
+            };
+            state.used_bytes = state.used_bytes.saturating_add(size);
+            state.cache.put(k, entry);
+            RespValue::BulkString(Some(next.to_string().into_bytes()))
+        }
+        Command::Hsetnx {
+            ref key,
+            ref field,
+            ref value,
+        } => {
+            let k = tenant_key(&tenant_id, key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&k);
+                } else {
+                    match &mut entry.data {
+                        EntryData::Hash(map) => {
+                            if map.contains_key(field) {
+                                return RespValue::Integer(0);
+                            }
+                            let size = calculate_entry_size(&k, &EntryData::Hash(map.clone()))
+                                + (field.len() + value.len()) as u64;
+                            if size > state.limit_bytes {
+                                return RespValue::Error(
+                                    "ERR tenant memory limit exceeded".to_string(),
+                                );
+                            }
+                            map.insert(field.to_string(), value.to_vec());
+                            reconcile_entry_size(state, &k);
+                            return RespValue::Integer(1);
+                        }
+                        _ => {
+                            return RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+            }
+
+            let mut map = HashMap::new();
+            map.insert(field.clone(), value.to_vec());
+            let size = calculate_entry_size(&k, &EntryData::Hash(map.clone()));
+            if size > state.limit_bytes {
+                return RespValue::Error("ERR tenant memory limit exceeded".to_string());
+            }
+            let entry = Entry {
+                data: EntryData::Hash(map),
+                expires_at: None,
+                size,
+            };
+            state.used_bytes = state.used_bytes.saturating_add(size);
+            state.cache.put(k, entry);
+            RespValue::Integer(1)
+        }
         // Set commands
         Command::Sadd {
             ref key,
@@ -843,6 +1205,90 @@ fn handle_command(
                 }
             } else {
                 RespValue::Integer(0)
+            }
+        }
+        Command::Smove {
+            ref source,
+            ref destination,
+            ref member,
+        } => {
+            let sk = tenant_key(&tenant_id, source);
+            let dk = tenant_key(&tenant_id, destination);
+
+            // Remove from source.
+            let removed = if let Some(entry) = state.cache.get_mut(&sk) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&sk);
+                    false
+                } else if let EntryData::Set(set) = &mut entry.data {
+                    let removed = set.remove(member);
+                    reconcile_entry_size(state, &sk);
+                    removed
+                } else {
+                    return RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    );
+                }
+            } else {
+                false
+            };
+
+            if !removed {
+                return RespValue::Integer(0);
+            }
+
+            // Add to destination (create if missing).
+            if let Some(entry) = state.cache.get_mut(&dk) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&dk);
+                } else if let EntryData::Set(set) = &mut entry.data {
+                    set.insert(member.clone());
+                    reconcile_entry_size(state, &dk);
+                    return RespValue::Integer(1);
+                } else {
+                    return RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    );
+                }
+            }
+            let mut set = HashSet::new();
+            set.insert(member.clone());
+            let size = calculate_entry_size(&dk, &EntryData::Set(set.clone()));
+            let entry = Entry {
+                data: EntryData::Set(set),
+                expires_at: None,
+                size,
+            };
+            state.used_bytes = state.used_bytes.saturating_add(size);
+            state.cache.put(dk, entry);
+            RespValue::Integer(1)
+        }
+        Command::Spop { ref key } => {
+            let k = tenant_key(&tenant_id, key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&k);
+                    return RespValue::BulkString(None);
+                }
+                match &mut entry.data {
+                    EntryData::Set(set) => {
+                        if let Some(member) = set.iter().next().cloned() {
+                            set.remove(&member);
+                            reconcile_entry_size(state, &k);
+                            RespValue::BulkString(Some(member.into_bytes()))
+                        } else {
+                            RespValue::BulkString(None)
+                        }
+                    }
+                    _ => RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    ),
+                }
+            } else {
+                RespValue::BulkString(None)
             }
         }
         Command::Smembers { ref key } => {
@@ -910,6 +1356,185 @@ fn handle_command(
             state.used_bytes = state.used_bytes.saturating_add(size);
             state.cache.put(k, entry);
             RespValue::Integer(1)
+        }
+        Command::Zincrby {
+            ref key,
+            delta,
+            ref member,
+        } => {
+            let k = tenant_key(&tenant_id, key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&k);
+                } else {
+                    match &mut entry.data {
+                        EntryData::ZSet(zset) => {
+                            let current = zset.get(member).copied().unwrap_or(0.0);
+                            let next = current + delta;
+                            zset.insert(member.clone(), next);
+                            reconcile_entry_size(state, &k);
+                            return RespValue::BulkString(Some(next.to_string().into_bytes()));
+                        }
+                        _ => {
+                            return RespValue::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+            }
+
+            let mut zset = BTreeMap::new();
+            zset.insert(member.clone(), delta);
+            let size = calculate_entry_size(&k, &EntryData::ZSet(zset.clone()));
+            let entry = Entry {
+                data: EntryData::ZSet(zset),
+                expires_at: None,
+                size,
+            };
+            state.used_bytes = state.used_bytes.saturating_add(size);
+            state.cache.put(k, entry);
+            RespValue::BulkString(Some(delta.to_string().into_bytes()))
+        }
+        Command::Zrangebyscore {
+            ref key,
+            ref min,
+            ref max,
+        } => {
+            let k = tenant_key(&tenant_id, key);
+            let (min_v, min_excl) = parse_zbound(min);
+            let (max_v, max_excl) = parse_zbound(max);
+            match state.cache.get(&k) {
+                Some(entry) => {
+                    if TenantState::is_expired(entry) {
+                        state.remove(&k);
+                        return RespValue::Array(vec![]);
+                    }
+                    match &entry.data {
+                        EntryData::ZSet(zset) => {
+                            let mut members: Vec<(&String, &f64)> = zset.iter().collect();
+                            members.sort_by(|a, b| {
+                                a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal)
+                            });
+                            let result: Vec<RespValue> = members
+                                .iter()
+                                .filter(|(_, score)| {
+                                    let above = if min_excl {
+                                        **score > min_v
+                                    } else {
+                                        **score >= min_v
+                                    };
+                                    let below = if max_excl {
+                                        **score < max_v
+                                    } else {
+                                        **score <= max_v
+                                    };
+                                    above && below
+                                })
+                                .map(|(m, _)| RespValue::BulkString(Some(m.as_bytes().to_vec())))
+                                .collect();
+                            RespValue::Array(result)
+                        }
+                        _ => RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        ),
+                    }
+                }
+                None => RespValue::Array(vec![]),
+            }
+        }
+        Command::Zremrangebyscore {
+            ref key,
+            ref min,
+            ref max,
+        } => {
+            let k = tenant_key(&tenant_id, key);
+            let (min_v, min_excl) = parse_zbound(min);
+            let (max_v, max_excl) = parse_zbound(max);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&k);
+                    return RespValue::Integer(0);
+                }
+                match &mut entry.data {
+                    EntryData::ZSet(zset) => {
+                        let to_remove: Vec<String> = zset
+                            .iter()
+                            .filter(|(_, score)| {
+                                let above = if min_excl {
+                                    **score > min_v
+                                } else {
+                                    **score >= min_v
+                                };
+                                let below = if max_excl {
+                                    **score < max_v
+                                } else {
+                                    **score <= max_v
+                                };
+                                above && below
+                            })
+                            .map(|(m, _)| m.clone())
+                            .collect();
+                        let count = to_remove.len() as i64;
+                        for m in to_remove {
+                            zset.remove(&m);
+                        }
+                        reconcile_entry_size(state, &k);
+                        RespValue::Integer(count)
+                    }
+                    _ => RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    ),
+                }
+            } else {
+                RespValue::Integer(0)
+            }
+        }
+        Command::Zcount {
+            ref key,
+            ref min,
+            ref max,
+        } => {
+            let k = tenant_key(&tenant_id, key);
+            let (min_v, min_excl) = parse_zbound(min);
+            let (max_v, max_excl) = parse_zbound(max);
+            match state.cache.get(&k) {
+                Some(entry) => {
+                    if TenantState::is_expired(entry) {
+                        state.remove(&k);
+                        return RespValue::Integer(0);
+                    }
+                    match &entry.data {
+                        EntryData::ZSet(zset) => {
+                            let count = zset
+                                .values()
+                                .filter(|score| {
+                                    let above = if min_excl {
+                                        **score > min_v
+                                    } else {
+                                        **score >= min_v
+                                    };
+                                    let below = if max_excl {
+                                        **score < max_v
+                                    } else {
+                                        **score <= max_v
+                                    };
+                                    above && below
+                                })
+                                .count() as i64;
+                            RespValue::Integer(count)
+                        }
+                        _ => RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        ),
+                    }
+                }
+                None => RespValue::Integer(0),
+            }
         }
         Command::Zrem {
             ref key,
@@ -1238,6 +1863,50 @@ fn handle_command(
             state.used_bytes = state.used_bytes.saturating_add(entry_size);
             RespValue::Integer(1)
         }
+        Command::Lpushx { ref key, ref value } => {
+            let k = tenant_key(&tenant_id, key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&k);
+                    return RespValue::Integer(0);
+                }
+                if let EntryData::List(list) = &mut entry.data {
+                    list.push_front(value.clone());
+                    let added = (k.len() + value.len()) as u64;
+                    entry.size = entry.size.saturating_add(added);
+                    state.used_bytes = state.used_bytes.saturating_add(added);
+                    return RespValue::Integer(list.len() as i64);
+                } else {
+                    return RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    );
+                }
+            }
+            RespValue::Integer(0)
+        }
+        Command::Rpushx { ref key, ref value } => {
+            let k = tenant_key(&tenant_id, key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&k);
+                    return RespValue::Integer(0);
+                }
+                if let EntryData::List(list) = &mut entry.data {
+                    list.push_back(value.clone());
+                    let added = (k.len() + value.len()) as u64;
+                    entry.size = entry.size.saturating_add(added);
+                    state.used_bytes = state.used_bytes.saturating_add(added);
+                    return RespValue::Integer(list.len() as i64);
+                } else {
+                    return RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    );
+                }
+            }
+            RespValue::Integer(0)
+        }
         Command::Lpop { ref key } => {
             let k = tenant_key(&tenant_id, key);
             if let Some(entry) = state.cache.get_mut(&k) {
@@ -1349,6 +2018,164 @@ fn handle_command(
                 None => RespValue::Array(vec![]),
             }
         }
+        Command::Lindex { ref key, index } => {
+            let k = tenant_key(&tenant_id, key);
+            match state.cache.get(&k) {
+                Some(entry) => {
+                    if TenantState::is_expired(entry) {
+                        state.remove(&k);
+                        return RespValue::BulkString(None);
+                    }
+                    match &entry.data {
+                        EntryData::List(list) => {
+                            let len = list.len() as i64;
+                            let idx = if index < 0 { len + index } else { index };
+                            if idx < 0 || idx >= len {
+                                RespValue::BulkString(None)
+                            } else {
+                                RespValue::BulkString(Some(list[idx as usize].clone()))
+                            }
+                        }
+                        _ => RespValue::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        ),
+                    }
+                }
+                None => RespValue::BulkString(None),
+            }
+        }
+        Command::Lset {
+            ref key,
+            index,
+            ref value,
+        } => {
+            let k = tenant_key(&tenant_id, key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&k);
+                    return RespValue::Error("ERR no such key".to_string());
+                }
+                match &mut entry.data {
+                    EntryData::List(list) => {
+                        let len = list.len() as i64;
+                        let idx = if index < 0 { len + index } else { index };
+                        if idx < 0 || idx >= len {
+                            return RespValue::Error("ERR index out of range".to_string());
+                        }
+                        let idx = idx as usize;
+                        let old = &list[idx];
+                        let delta = (value.len() as i128) - (old.len() as i128);
+                        list[idx] = value.to_vec();
+                        entry.size = (entry.size as i128 + delta).max(0) as u64;
+                        if delta >= 0 {
+                            state.used_bytes = state.used_bytes.saturating_add(delta as u64);
+                        } else {
+                            state.used_bytes = state.used_bytes.saturating_sub((-delta) as u64);
+                        }
+                        RespValue::SimpleString("OK".to_string())
+                    }
+                    _ => RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    ),
+                }
+            } else {
+                RespValue::Error("ERR no such key".to_string())
+            }
+        }
+        Command::Ltrim {
+            ref key,
+            start,
+            stop,
+        } => {
+            let k = tenant_key(&tenant_id, key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&k);
+                    return RespValue::SimpleString("OK".to_string());
+                }
+                match &mut entry.data {
+                    EntryData::List(list) => {
+                        let len = list.len() as i64;
+                        let start_idx = if start < 0 {
+                            (len + start).max(0)
+                        } else {
+                            start.min(len)
+                        } as usize;
+                        let stop_idx = if stop < 0 {
+                            (len + stop + 1).max(0)
+                        } else {
+                            (stop + 1).min(len)
+                        } as usize;
+                        let kept: VecDeque<Vec<u8>> = list
+                            .iter()
+                            .skip(start_idx)
+                            .take(stop_idx.saturating_sub(start_idx))
+                            .cloned()
+                            .collect();
+                        let new_size = calculate_entry_size(&k, &EntryData::List(kept.clone()));
+                        let delta = new_size as i128 - entry.size as i128;
+                        entry.data = EntryData::List(kept);
+                        entry.size = new_size;
+                        if delta >= 0 {
+                            state.used_bytes = state.used_bytes.saturating_add(delta as u64);
+                        } else {
+                            state.used_bytes = state.used_bytes.saturating_sub((-delta) as u64);
+                        }
+                        RespValue::SimpleString("OK".to_string())
+                    }
+                    _ => RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    ),
+                }
+            } else {
+                RespValue::SimpleString("OK".to_string())
+            }
+        }
+        Command::Linsert {
+            ref key,
+            before,
+            ref pivot,
+            ref value,
+        } => {
+            let k = tenant_key(&tenant_id, key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&k);
+                    return RespValue::Integer(-1);
+                }
+                match &mut entry.data {
+                    EntryData::List(list) => {
+                        if let Some(pos) = list.iter().position(|v| v == pivot) {
+                            let insert_at = if before { pos } else { pos + 1 };
+                            list.insert(insert_at, value.to_vec());
+                            let new_size = calculate_entry_size(
+                                &k,
+                                &EntryData::List(list.iter().cloned().collect()),
+                            );
+                            let delta = new_size as i128 - entry.size as i128;
+                            entry.size = new_size;
+                            if delta >= 0 {
+                                state.used_bytes = state.used_bytes.saturating_add(delta as u64);
+                            } else {
+                                state.used_bytes = state.used_bytes.saturating_sub((-delta) as u64);
+                            }
+                            RespValue::Integer(list.len() as i64)
+                        } else {
+                            RespValue::Integer(-1)
+                        }
+                    }
+                    _ => RespValue::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    ),
+                }
+            } else {
+                RespValue::Integer(0)
+            }
+        }
         // String extensions
         Command::Incr { ref key } => incr_decr(state, &tenant_id, key, 1),
         Command::Decr { ref key } => incr_decr(state, &tenant_id, key, -1),
@@ -1456,6 +2283,63 @@ fn handle_command(
                 RespValue::Integer(-2)
             }
         }
+        Command::Pexpire {
+            ref key,
+            milliseconds,
+        } => {
+            let k = tenant_key(&tenant_id, key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&k);
+                    return RespValue::Integer(0);
+                }
+                if milliseconds <= 0 {
+                    state.remove(&k);
+                    return RespValue::Integer(1);
+                }
+                entry.expires_at = Some(current_timestamp() + (milliseconds as u64).div_ceil(1000));
+                RespValue::Integer(1)
+            } else {
+                RespValue::Integer(0)
+            }
+        }
+        Command::Pexpireat {
+            ref key,
+            milliseconds_timestamp,
+        } => {
+            let k = tenant_key(&tenant_id, key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&k);
+                    return RespValue::Integer(0);
+                }
+                if milliseconds_timestamp <= 0 {
+                    state.remove(&k);
+                    return RespValue::Integer(1);
+                }
+                entry.expires_at = Some((milliseconds_timestamp as u64).div_ceil(1000));
+                RespValue::Integer(1)
+            } else {
+                RespValue::Integer(0)
+            }
+        }
+        Command::Expireat { ref key, timestamp } => {
+            let k = tenant_key(&tenant_id, key);
+            if let Some(entry) = state.cache.get_mut(&k) {
+                if TenantState::is_expired(entry) {
+                    state.remove(&k);
+                    return RespValue::Integer(0);
+                }
+                if timestamp <= 0 {
+                    state.remove(&k);
+                    return RespValue::Integer(1);
+                }
+                entry.expires_at = Some(timestamp as u64);
+                RespValue::Integer(1)
+            } else {
+                RespValue::Integer(0)
+            }
+        }
         // Bulk / multi-key commands
         Command::Mset { ref pairs } => {
             for (key, value) in pairs {
@@ -1550,6 +2434,79 @@ fn handle_command(
                 RespValue::SimpleString("OK".to_string())
             } else {
                 RespValue::Error("ERR no such key".to_string())
+            }
+        }
+        Command::Dbsize => {
+            let count = state
+                .cache
+                .iter()
+                .filter(|(_, entry)| !TenantState::is_expired(entry))
+                .count() as i64;
+            RespValue::Integer(count)
+        }
+        Command::Randomkey => {
+            // Pick a non-expired key deterministically-ish via the first entry
+            // after a rotating cursor. Good enough for the random-key use case.
+            let key = state
+                .cache
+                .iter()
+                .find(|(_, entry)| !TenantState::is_expired(entry))
+                .map(|(k, _)| k.clone());
+            match key {
+                Some(k) => {
+                    // Strip the tenant prefix for the returned key.
+                    let raw = k.split_once(':').map(|(_, r)| r).unwrap_or(&k);
+                    RespValue::BulkString(Some(raw.as_bytes().to_vec()))
+                }
+                None => RespValue::BulkString(None),
+            }
+        }
+        Command::Echo { ref message } => RespValue::BulkString(Some(message.as_bytes().to_vec())),
+        Command::Info => {
+            let mut info = String::new();
+            info.push_str("# Server\r\n");
+            info.push_str("ultracache_version:1.0.0\r\n");
+            info.push_str("mode:standalone\r\n");
+            info.push_str("# Clients\r\n");
+            info.push_str("connected_clients:0\r\n");
+            info.push_str("# Memory\r\n");
+            info.push_str(&format!("used_memory:{}\r\n", state.used_bytes));
+            info.push_str(&format!("maxmemory:{}\r\n", state.limit_bytes));
+            info.push_str("# Stats\r\n");
+            info.push_str(&format!("total_commands:{}\r\n", state.total_commands));
+            info.push_str(&format!("evicted_keys:{}\r\n", state.eviction_count));
+            info.push_str(&format!("latency_p99_micros:{}\r\n", state.calculate_p99()));
+            RespValue::BulkString(Some(info.into_bytes()))
+        }
+        Command::ConfigGet { ref parameter } => {
+            let param = parameter.to_lowercase();
+            let mut values: Vec<RespValue> = Vec::new();
+            if param == "maxmemory" || param == "*" {
+                values.push(RespValue::BulkString(Some(b"maxmemory".to_vec())));
+                values.push(RespValue::BulkString(Some(
+                    state.limit_bytes.to_string().into_bytes(),
+                )));
+            }
+            if param == "maxmemory-policy" || param == "*" {
+                values.push(RespValue::BulkString(Some(b"maxmemory-policy".to_vec())));
+                values.push(RespValue::BulkString(Some(b"allkeys-lru".to_vec())));
+            }
+            RespValue::Array(values)
+        }
+        Command::ConfigSet {
+            ref parameter,
+            ref value,
+        } => {
+            let param = parameter.to_lowercase();
+            if param == "maxmemory" {
+                if let Ok(bytes) = value.parse::<u64>() {
+                    state.limit_bytes = bytes;
+                    RespValue::SimpleString("OK".to_string())
+                } else {
+                    RespValue::Error("ERR invalid maxmemory value".to_string())
+                }
+            } else {
+                RespValue::Error(format!("ERR unknown parameter '{parameter}'"))
             }
         }
         // Sorted set extensions
@@ -1726,19 +2683,34 @@ fn is_mutating_command(cmd: &Command) -> bool {
     matches!(
         cmd,
         Command::Set { .. }
+            | Command::GetSet { .. }
             | Command::Del { .. }
             | Command::Expire { .. }
+            | Command::Pexpire { .. }
+            | Command::Pexpireat { .. }
+            | Command::Expireat { .. }
             | Command::Hset { .. }
             | Command::Hdel { .. }
             | Command::Hincrby { .. }
+            | Command::Hincrbyfloat { .. }
+            | Command::Hsetnx { .. }
             | Command::Sadd { .. }
             | Command::Srem { .. }
+            | Command::Smove { .. }
+            | Command::Spop { .. }
             | Command::Zadd { .. }
             | Command::Zrem { .. }
+            | Command::Zincrby { .. }
+            | Command::Zremrangebyscore { .. }
             | Command::Lpush { .. }
+            | Command::Lpushx { .. }
             | Command::Rpush { .. }
+            | Command::Rpushx { .. }
             | Command::Lpop { .. }
             | Command::Rpop { .. }
+            | Command::Lset { .. }
+            | Command::Ltrim { .. }
+            | Command::Linsert { .. }
             | Command::Incr { .. }
             | Command::Decr { .. }
             | Command::Incrby { .. }
@@ -1748,21 +2720,70 @@ fn is_mutating_command(cmd: &Command) -> bool {
             | Command::Mset { .. }
             | Command::Flushdb
             | Command::Rename { .. }
+            | Command::ConfigSet { .. }
     )
 }
 
 /// Serialize a command back into RESP bulk-string arguments for AOF logging.
 fn command_to_args(cmd: &Command) -> Option<Vec<String>> {
     match cmd {
-        Command::Set { key, value } => Some(vec![
-            "SET".to_string(),
+        Command::Set {
+            key,
+            value,
+            ex,
+            px,
+            nx,
+            xx,
+        } => {
+            let mut args = vec![
+                "SET".to_string(),
+                key.clone(),
+                String::from_utf8_lossy(value).into_owned(),
+            ];
+            if let Some(secs) = ex {
+                args.push("EX".to_string());
+                args.push(secs.to_string());
+            }
+            if let Some(ms) = px {
+                args.push("PX".to_string());
+                args.push(ms.to_string());
+            }
+            if *nx {
+                args.push("NX".to_string());
+            }
+            if *xx {
+                args.push("XX".to_string());
+            }
+            Some(args)
+        }
+        Command::GetSet { key, value } => Some(vec![
+            "GETSET".to_string(),
             key.clone(),
             String::from_utf8_lossy(value).into_owned(),
         ]),
+        Command::StrLen { key } => Some(vec!["STRLEN".to_string(), key.clone()]),
         Command::Del { key } => Some(vec!["DEL".to_string(), key.clone()]),
         Command::Expire { key, seconds } => {
             Some(vec!["EXPIRE".to_string(), key.clone(), seconds.to_string()])
         }
+        Command::Pexpire { key, milliseconds } => Some(vec![
+            "PEXPIRE".to_string(),
+            key.clone(),
+            milliseconds.to_string(),
+        ]),
+        Command::Pexpireat {
+            key,
+            milliseconds_timestamp,
+        } => Some(vec![
+            "PEXPIREAT".to_string(),
+            key.clone(),
+            milliseconds_timestamp.to_string(),
+        ]),
+        Command::Expireat { key, timestamp } => Some(vec![
+            "EXPIREAT".to_string(),
+            key.clone(),
+            timestamp.to_string(),
+        ]),
         Command::Hset { key, field, value } => Some(vec![
             "HSET".to_string(),
             key.clone(),
@@ -1776,12 +2797,35 @@ fn command_to_args(cmd: &Command) -> Option<Vec<String>> {
             field.clone(),
             delta.to_string(),
         ]),
+        Command::Hincrbyfloat { key, field, delta } => Some(vec![
+            "HINCRBYFLOAT".to_string(),
+            key.clone(),
+            field.clone(),
+            delta.to_string(),
+        ]),
+        Command::Hsetnx { key, field, value } => Some(vec![
+            "HSETNX".to_string(),
+            key.clone(),
+            field.clone(),
+            String::from_utf8_lossy(value).into_owned(),
+        ]),
         Command::Sadd { key, member } => {
             Some(vec!["SADD".to_string(), key.clone(), member.clone()])
         }
         Command::Srem { key, member } => {
             Some(vec!["SREM".to_string(), key.clone(), member.clone()])
         }
+        Command::Smove {
+            source,
+            destination,
+            member,
+        } => Some(vec![
+            "SMOVE".to_string(),
+            source.clone(),
+            destination.clone(),
+            member.clone(),
+        ]),
+        Command::Spop { key } => Some(vec!["SPOP".to_string(), key.clone()]),
         Command::Zadd { key, score, member } => Some(vec![
             "ZADD".to_string(),
             key.clone(),
@@ -1791,8 +2835,25 @@ fn command_to_args(cmd: &Command) -> Option<Vec<String>> {
         Command::Zrem { key, member } => {
             Some(vec!["ZREM".to_string(), key.clone(), member.clone()])
         }
+        Command::Zincrby { key, delta, member } => Some(vec![
+            "ZINCRBY".to_string(),
+            key.clone(),
+            delta.to_string(),
+            member.clone(),
+        ]),
+        Command::Zremrangebyscore { key, min, max } => Some(vec![
+            "ZREMRANGEBYSCORE".to_string(),
+            key.clone(),
+            min.clone(),
+            max.clone(),
+        ]),
         Command::Lpush { key, value } => Some(vec![
             "LPUSH".to_string(),
+            key.clone(),
+            String::from_utf8_lossy(value).into_owned(),
+        ]),
+        Command::Lpushx { key, value } => Some(vec![
+            "LPUSHX".to_string(),
             key.clone(),
             String::from_utf8_lossy(value).into_owned(),
         ]),
@@ -1801,8 +2862,37 @@ fn command_to_args(cmd: &Command) -> Option<Vec<String>> {
             key.clone(),
             String::from_utf8_lossy(value).into_owned(),
         ]),
+        Command::Rpushx { key, value } => Some(vec![
+            "RPUSHX".to_string(),
+            key.clone(),
+            String::from_utf8_lossy(value).into_owned(),
+        ]),
         Command::Lpop { key } => Some(vec!["LPOP".to_string(), key.clone()]),
         Command::Rpop { key } => Some(vec!["RPOP".to_string(), key.clone()]),
+        Command::Lset { key, index, value } => Some(vec![
+            "LSET".to_string(),
+            key.clone(),
+            index.to_string(),
+            String::from_utf8_lossy(value).into_owned(),
+        ]),
+        Command::Ltrim { key, start, stop } => Some(vec![
+            "LTRIM".to_string(),
+            key.clone(),
+            start.to_string(),
+            stop.to_string(),
+        ]),
+        Command::Linsert {
+            key,
+            before,
+            pivot,
+            value,
+        } => Some(vec![
+            "LINSERT".to_string(),
+            key.clone(),
+            if *before { "BEFORE" } else { "AFTER" }.to_string(),
+            String::from_utf8_lossy(pivot).into_owned(),
+            String::from_utf8_lossy(value).into_owned(),
+        ]),
         Command::Incr { key } => Some(vec!["INCR".to_string(), key.clone()]),
         Command::Decr { key } => Some(vec!["DECR".to_string(), key.clone()]),
         Command::Incrby { key, delta } => {
@@ -1827,6 +2917,12 @@ fn command_to_args(cmd: &Command) -> Option<Vec<String>> {
         }
         Command::Flushdb => Some(vec!["FLUSHDB".to_string()]),
         Command::Rename { from, to } => Some(vec!["RENAME".to_string(), from.clone(), to.clone()]),
+        Command::ConfigSet { parameter, value } => Some(vec![
+            "CONFIG".to_string(),
+            "SET".to_string(),
+            parameter.clone(),
+            value.clone(),
+        ]),
         _ => None,
     }
 }
@@ -1844,7 +2940,45 @@ fn parse_args_to_command(args: &[String]) -> Option<Command> {
     }
     let cmd = args[0].to_uppercase();
     let cmd = match cmd.as_str() {
-        "SET" if args.len() == 3 => Command::Set {
+        "SET" if args.len() >= 3 => {
+            let key = args[1].clone();
+            let value = args[2].as_bytes().to_vec();
+            let mut ex: Option<i64> = None;
+            let mut px: Option<i64> = None;
+            let mut nx = false;
+            let mut xx = false;
+            let mut i = 3;
+            while i < args.len() {
+                match args[i].to_uppercase().as_str() {
+                    "EX" if i + 1 < args.len() => {
+                        ex = Some(args[i + 1].parse().ok()?);
+                        i += 2;
+                    }
+                    "PX" if i + 1 < args.len() => {
+                        px = Some(args[i + 1].parse().ok()?);
+                        i += 2;
+                    }
+                    "NX" => {
+                        nx = true;
+                        i += 1;
+                    }
+                    "XX" => {
+                        xx = true;
+                        i += 1;
+                    }
+                    _ => i += 1,
+                }
+            }
+            Command::Set {
+                key,
+                value,
+                ex,
+                px,
+                nx,
+                xx,
+            }
+        }
+        "GETSET" if args.len() == 3 => Command::GetSet {
             key: args[1].clone(),
             value: args[2].as_bytes().to_vec(),
         },
@@ -1854,6 +2988,18 @@ fn parse_args_to_command(args: &[String]) -> Option<Command> {
         "EXPIRE" if args.len() == 3 => Command::Expire {
             key: args[1].clone(),
             seconds: args[2].parse().ok()?,
+        },
+        "PEXPIRE" if args.len() == 3 => Command::Pexpire {
+            key: args[1].clone(),
+            milliseconds: args[2].parse().ok()?,
+        },
+        "PEXPIREAT" if args.len() == 3 => Command::Pexpireat {
+            key: args[1].clone(),
+            milliseconds_timestamp: args[2].parse().ok()?,
+        },
+        "EXPIREAT" if args.len() == 3 => Command::Expireat {
+            key: args[1].clone(),
+            timestamp: args[2].parse().ok()?,
         },
         "HSET" if args.len() == 4 => Command::Hset {
             key: args[1].clone(),
@@ -1869,6 +3015,16 @@ fn parse_args_to_command(args: &[String]) -> Option<Command> {
             field: args[2].clone(),
             delta: args[3].parse().ok()?,
         },
+        "HINCRBYFLOAT" if args.len() == 4 => Command::Hincrbyfloat {
+            key: args[1].clone(),
+            field: args[2].clone(),
+            delta: args[3].parse().ok()?,
+        },
+        "HSETNX" if args.len() == 4 => Command::Hsetnx {
+            key: args[1].clone(),
+            field: args[2].clone(),
+            value: args[3].as_bytes().to_vec(),
+        },
         "SADD" if args.len() == 3 => Command::Sadd {
             key: args[1].clone(),
             member: args[2].clone(),
@@ -1876,6 +3032,14 @@ fn parse_args_to_command(args: &[String]) -> Option<Command> {
         "SREM" if args.len() == 3 => Command::Srem {
             key: args[1].clone(),
             member: args[2].clone(),
+        },
+        "SMOVE" if args.len() == 4 => Command::Smove {
+            source: args[1].clone(),
+            destination: args[2].clone(),
+            member: args[3].clone(),
+        },
+        "SPOP" if args.len() == 2 => Command::Spop {
+            key: args[1].clone(),
         },
         "ZADD" if args.len() == 4 => Command::Zadd {
             key: args[1].clone(),
@@ -1886,6 +3050,16 @@ fn parse_args_to_command(args: &[String]) -> Option<Command> {
             key: args[1].clone(),
             member: args[2].clone(),
         },
+        "ZINCRBY" if args.len() == 4 => Command::Zincrby {
+            key: args[1].clone(),
+            delta: args[2].parse().ok()?,
+            member: args[3].clone(),
+        },
+        "ZREMRANGEBYSCORE" if args.len() == 4 => Command::Zremrangebyscore {
+            key: args[1].clone(),
+            min: args[2].clone(),
+            max: args[3].clone(),
+        },
         "LPUSH" if args.len() == 3 => Command::Lpush {
             key: args[1].clone(),
             value: args[2].as_bytes().to_vec(),
@@ -1894,11 +3068,35 @@ fn parse_args_to_command(args: &[String]) -> Option<Command> {
             key: args[1].clone(),
             value: args[2].as_bytes().to_vec(),
         },
+        "LPUSHX" if args.len() == 3 => Command::Lpushx {
+            key: args[1].clone(),
+            value: args[2].as_bytes().to_vec(),
+        },
+        "RPUSHX" if args.len() == 3 => Command::Rpushx {
+            key: args[1].clone(),
+            value: args[2].as_bytes().to_vec(),
+        },
         "LPOP" if args.len() == 2 => Command::Lpop {
             key: args[1].clone(),
         },
         "RPOP" if args.len() == 2 => Command::Rpop {
             key: args[1].clone(),
+        },
+        "LSET" if args.len() == 4 => Command::Lset {
+            key: args[1].clone(),
+            index: args[2].parse().ok()?,
+            value: args[3].as_bytes().to_vec(),
+        },
+        "LTRIM" if args.len() == 4 => Command::Ltrim {
+            key: args[1].clone(),
+            start: args[2].parse().ok()?,
+            stop: args[3].parse().ok()?,
+        },
+        "LINSERT" if args.len() == 5 => Command::Linsert {
+            key: args[1].clone(),
+            before: args[2].eq_ignore_ascii_case("BEFORE"),
+            pivot: args[3].as_bytes().to_vec(),
+            value: args[4].as_bytes().to_vec(),
         },
         "INCR" if args.len() == 2 => Command::Incr {
             key: args[1].clone(),
@@ -2350,6 +3548,10 @@ mod tests {
             Command::Set {
                 key: "k".to_string(),
                 value: b"hello".to_vec(),
+                ex: None,
+                px: None,
+                nx: false,
+                xx: false,
             },
         );
         let resp = run(
@@ -2414,6 +3616,10 @@ mod tests {
             Command::Set {
                 key: "k".to_string(),
                 value: b"foo".to_vec(),
+                ex: None,
+                px: None,
+                nx: false,
+                xx: false,
             },
         );
         let r = run(
@@ -2526,6 +3732,10 @@ mod tests {
             Command::Set {
                 key: "a".to_string(),
                 value: b"x".to_vec(),
+                ex: None,
+                px: None,
+                nx: false,
+                xx: false,
             },
         );
         let r = run(
@@ -2567,6 +3777,10 @@ mod tests {
                 Command::Set {
                     key: k.to_string(),
                     value: b"v".to_vec(),
+                    ex: None,
+                    px: None,
+                    nx: false,
+                    xx: false,
                 },
             );
         }
@@ -2716,6 +3930,10 @@ mod tests {
             Command::Set {
                 key: "k".to_string(),
                 value: b"v".to_vec(),
+                ex: None,
+                px: None,
+                nx: false,
+                xx: false,
             },
             aof_ref,
         );
